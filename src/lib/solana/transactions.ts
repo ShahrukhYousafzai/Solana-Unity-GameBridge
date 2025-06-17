@@ -49,7 +49,7 @@ async function sendTransaction(
     throw new Error("Invalid wallet public key. Expected instance of PublicKey.");
   }
 
-  // Validate all instruction keys
+  // Validate all instruction keys and programIds
   instructions.forEach((instruction, idx) => {
     if (!instruction.programId || !(instruction.programId instanceof PublicKey)) {
       throw new Error(`Instruction ${idx} has invalid or undefined programId.`);
@@ -66,10 +66,8 @@ async function sendTransaction(
 
   const latestBlockhash = await connection.getLatestBlockhash();
   
-  // Ensure publicKey is still valid before creating message
-  if (!wallet.publicKey) { 
-    throw new Error("Wallet public key became undefined before transaction message creation.");
-  }
+  // Ensure publicKey is still valid before creating message (already captured and validated as 'publicKey')
+  // This redundant check was removed as publicKey is now a const captured at the start.
 
   const messageV0 = new TransactionMessage({
     payerKey: publicKey, 
@@ -107,13 +105,14 @@ export async function transferNft(
   nft: Nft,
   recipientAddress: PublicKey
 ): Promise<string> {
-  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const ownerPublicKey = wallet.publicKey;
+  if (!ownerPublicKey) throw new Error("Wallet not connected.");
   if (!(recipientAddress instanceof PublicKey)) {
     throw new Error('Recipient address is not a valid PublicKey instance for NFT transfer.');
   }
 
   const mintPublicKey = new PublicKey(nft.id);
-  const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, wallet.publicKey);
+  const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey);
   const recipientAta = getAssociatedTokenAddressSync(mintPublicKey, recipientAddress);
   
   const instructions: TransactionInstruction[] = [];
@@ -122,7 +121,7 @@ export async function transferNft(
   if (!recipientAtaInfo) {
     instructions.push(
       createAssociatedTokenAccountInstruction(
-        wallet.publicKey, // Payer
+        ownerPublicKey, // Payer
         recipientAta,    // ATA
         recipientAddress, // Owner
         mintPublicKey     // Mint
@@ -134,7 +133,7 @@ export async function transferNft(
     createSplTransferInstruction(
       sourceAta,
       recipientAta,
-      wallet.publicKey,
+      ownerPublicKey,
       1 // NFTs always have amount 1
     )
   );
@@ -150,7 +149,8 @@ export async function transferSplToken(
   recipientAddress: PublicKey,
   amount: number // UI amount, not raw
 ): Promise<string> {
-  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const ownerPublicKey = wallet.publicKey;
+  if (!ownerPublicKey) throw new Error("Wallet not connected.");
   if (!(recipientAddress instanceof PublicKey)) {
     throw new Error('Recipient address is not a valid PublicKey instance for SPL token transfer.');
   }
@@ -158,7 +158,7 @@ export async function transferSplToken(
   const mintPublicKey = new PublicKey(token.id);
   const rawAmount = BigInt(Math.round(amount * (10 ** token.decimals)));
 
-  const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, wallet.publicKey);
+  const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey);
   const recipientAta = getAssociatedTokenAddressSync(mintPublicKey, recipientAddress);
   
   const instructions: TransactionInstruction[] = [];
@@ -167,7 +167,7 @@ export async function transferSplToken(
   if (!recipientAtaInfo) {
     instructions.push(
       createAssociatedTokenAccountInstruction(
-        wallet.publicKey,
+        ownerPublicKey,
         recipientAta,
         recipientAddress,
         mintPublicKey
@@ -179,7 +179,7 @@ export async function transferSplToken(
     createSplTransferInstruction(
       sourceAta,
       recipientAta,
-      wallet.publicKey,
+      ownerPublicKey,
       rawAmount
     )
   );
@@ -193,22 +193,23 @@ export async function burnNft(
   wallet: WalletContextState,
   nft: Nft
 ): Promise<string> {
-  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const ownerPublicKey = wallet.publicKey;
+  if (!ownerPublicKey) throw new Error("Wallet not connected.");
 
   const mintPublicKey = new PublicKey(nft.id);
-  const ownerTokenAccount = nft.tokenAddress ? new PublicKey(nft.tokenAddress) : getAssociatedTokenAddressSync(mintPublicKey, wallet.publicKey);
+  const ownerTokenAccount = nft.tokenAddress ? new PublicKey(nft.tokenAddress) : getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey);
 
   const instructions: TransactionInstruction[] = [
     createSplBurnInstruction(
       ownerTokenAccount, // account to burn from
       mintPublicKey,     // mint
-      wallet.publicKey,  // owner
+      ownerPublicKey,  // owner
       1                  // amount
     ),
     createCloseAccountInstruction(
       ownerTokenAccount,    // account to close
-      wallet.publicKey,     // destination (refund lamports to)
-      wallet.publicKey      // owner of account to close
+      ownerPublicKey,     // destination (refund lamports to)
+      ownerPublicKey      // owner of account to close
     )
   ];
   return sendTransaction(instructions, connection, wallet);
@@ -221,17 +222,18 @@ export async function burnSplToken(
   token: SplToken,
   amount: number // UI amount
 ): Promise<string> {
-  if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  const ownerPublicKey = wallet.publicKey;
+  if (!ownerPublicKey) throw new Error("Wallet not connected.");
 
   const mintPublicKey = new PublicKey(token.id);
   const rawAmount = BigInt(Math.round(amount * (10 ** token.decimals)));
-  const ownerTokenAccount = token.tokenAddress ? new PublicKey(token.tokenAddress) : getAssociatedTokenAddressSync(mintPublicKey, wallet.publicKey);
+  const ownerTokenAccount = token.tokenAddress ? new PublicKey(token.tokenAddress) : getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey);
   
   const instructions: TransactionInstruction[] = [
     createSplBurnInstruction(
       ownerTokenAccount,
       mintPublicKey,
-      wallet.publicKey,
+      ownerPublicKey,
       rawAmount
     )
   ];
@@ -240,8 +242,8 @@ export async function burnSplToken(
      instructions.push(
         createCloseAccountInstruction(
             ownerTokenAccount,    
-            wallet.publicKey,     
-            wallet.publicKey      
+            ownerPublicKey,     
+            ownerPublicKey      
         )
      );
   }
@@ -258,18 +260,24 @@ export async function transferCNft(
   recipientAddress: PublicKey,
   rpcUrl: string
 ): Promise<string> {
-  if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or doesn't support signing.");
+  const walletPublicKey = wallet.publicKey; // Capture wallet's public key
+  const walletSignTransaction = wallet.signTransaction;
+
+  if (!walletPublicKey || !walletSignTransaction) {
+    throw new Error("Wallet not connected or doesn't support signing.");
+  }
+  if (!(walletPublicKey instanceof PublicKey)) {
+    throw new Error("Invalid wallet public key. Expected instance of PublicKey.");
+  }
   if (!(recipientAddress instanceof PublicKey)) {
     throw new Error('Recipient address is not a valid PublicKey instance for cNFT transfer.');
   }
+
   if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing.");
 
   const assetProof = await getHeliusAssetProof(cnft.id, rpcUrl);
-  if (!assetProof || !assetProof.root || !assetProof.proof) {
-    throw new Error('Failed to retrieve valid asset proof from Helius for transfer (proof or root missing).');
-  }
-  if (assetProof.proof.some(p => typeof p !== 'string' || !p.trim())) { 
-    throw new Error('Invalid asset proof: contains undefined, null, or empty proof elements.');
+  if (!assetProof || !assetProof.root || !assetProof.proof || assetProof.proof.some(p => typeof p !== 'string' || !p.trim())) {
+    throw new Error('Failed to retrieve valid asset proof from Helius (proof, root missing, or proof elements invalid).');
   }
   
   const { compression, ownership } = cnft.rawHeliusAsset;
@@ -287,21 +295,33 @@ export async function transferCNft(
   const leafOwner = new PublicKey(ownership.owner); 
   const leafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : leafOwner;
 
+  if (!(merkleTreeKey instanceof PublicKey)) throw new Error("merkleTreeKey is not a PublicKey.");
+  if (!(leafOwner instanceof PublicKey)) throw new Error("leafOwner is not a PublicKey.");
+  if (!(leafDelegate instanceof PublicKey)) throw new Error("leafDelegate is not a PublicKey.");
+  if (!(LOCAL_SPL_NOOP_PROGRAM_ID instanceof PublicKey)) throw new Error("LOCAL_SPL_NOOP_PROGRAM_ID is not a PublicKey.");
+  if (!(LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID instanceof PublicKey)) throw new Error("LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID is not a PublicKey.");
+  if (!(SystemProgram.programId instanceof PublicKey)) throw new Error("SystemProgram.programId is not a PublicKey.");
+
+
   const anchorRemainingAccounts: AccountMeta[] = assetProof.proof.map((p, idx) => {
     if (typeof p !== 'string' || !p.trim()) { 
         throw new Error(`Proof element at index ${idx} is invalid (not a non-empty string). Received: ${p}`);
     }
-    return { pubkey: new PublicKey(p), isSigner: false, isWritable: false };
+    const pubkey = new PublicKey(p);
+    if (!(pubkey instanceof PublicKey)) throw new Error(`Proof element pubkey at index ${idx} is not a PublicKey.`);
+    return { pubkey, isSigner: false, isWritable: false };
   });
 
   const transferInstructionAccounts = {
-    leafOwner,
-    leafDelegate,
+    leafOwner, // The current owner of the cNFT
+    leafDelegate, // The delegate if any, otherwise the owner
     newLeafOwner: recipientAddress,
     merkleTree: merkleTreeKey,
     logWrapper: LOCAL_SPL_NOOP_PROGRAM_ID,
     compressionProgram: LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
     systemProgram: SystemProgram.programId, 
+    // Note: The signer of the transaction (walletPublicKey) must be either leafOwner or leafDelegate.
+    // This is implicitly handled by who calls sendTransaction with the wallet.
   };
   
   const transferInstructionArgs = {
@@ -315,7 +335,7 @@ export async function transferCNft(
   const transferInstruction = createBubblegumTransferInstruction(
     transferInstructionAccounts,
     transferInstructionArgs,
-    anchorRemainingAccounts // Pass as the third argument
+    anchorRemainingAccounts 
   );
 
   const instructions: TransactionInstruction[] = [transferInstruction];
@@ -330,15 +350,21 @@ export async function burnCNft(
   cnft: CNft,
   rpcUrl: string 
 ): Promise<string> {
-  if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or doesn't support signing.");
+  const walletPublicKey = wallet.publicKey;
+  const walletSignTransaction = wallet.signTransaction;
+
+  if (!walletPublicKey || !walletSignTransaction) {
+    throw new Error("Wallet not connected or doesn't support signing.");
+  }
+   if (!(walletPublicKey instanceof PublicKey)) {
+    throw new Error("Invalid wallet public key. Expected instance of PublicKey.");
+  }
+
   if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing.");
 
   const assetProof = await getHeliusAssetProof(cnft.id, rpcUrl);
-  if (!assetProof || !assetProof.root || !assetProof.proof) {
-    throw new Error('Failed to retrieve valid asset proof from Helius for burn (proof or root missing).');
-  }
-  if (assetProof.proof.some(p => typeof p !== 'string' || !p.trim())) {
-    throw new Error('Invalid asset proof: contains undefined, null, or empty proof elements.');
+   if (!assetProof || !assetProof.root || !assetProof.proof || assetProof.proof.some(p => typeof p !== 'string' || !p.trim())) {
+    throw new Error('Failed to retrieve valid asset proof from Helius for burn (proof, root missing, or proof elements invalid).');
   }
 
   const { compression, ownership } = cnft.rawHeliusAsset;
@@ -357,20 +383,30 @@ export async function burnCNft(
   const leafOwner =  new PublicKey(ownership.owner); 
   const leafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : leafOwner;
 
+  if (!(merkleTreeKey instanceof PublicKey)) throw new Error("merkleTreeKey is not a PublicKey for burn.");
+  if (!(leafOwner instanceof PublicKey)) throw new Error("leafOwner is not a PublicKey for burn.");
+  if (!(leafDelegate instanceof PublicKey)) throw new Error("leafDelegate is not a PublicKey for burn.");
+  if (!(LOCAL_SPL_NOOP_PROGRAM_ID instanceof PublicKey)) throw new Error("LOCAL_SPL_NOOP_PROGRAM_ID is not a PublicKey for burn.");
+  if (!(LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID instanceof PublicKey)) throw new Error("LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID is not a PublicKey for burn.");
+  if (!(SystemProgram.programId instanceof PublicKey)) throw new Error("SystemProgram.programId is not a PublicKey for burn.");
+
   const anchorRemainingAccounts: AccountMeta[] = assetProof.proof.map((p, idx) => {
      if (typeof p !== 'string' || !p.trim()) {
         throw new Error(`Proof element at index ${idx} is invalid (not a non-empty string). Received: ${p}`);
     }
-    return { pubkey: new PublicKey(p), isSigner: false, isWritable: false };
+    const pubkey = new PublicKey(p);
+    if (!(pubkey instanceof PublicKey)) throw new Error(`Proof element pubkey at index ${idx} is not a PublicKey for burn proof.`);
+    return { pubkey, isSigner: false, isWritable: false };
   });
 
   const burnInstructionAccounts = {
-    leafOwner,
-    leafDelegate,
+    leafOwner, // The current owner of the cNFT
+    leafDelegate, // The delegate if any, otherwise the owner
     merkleTree: merkleTreeKey,
     logWrapper: LOCAL_SPL_NOOP_PROGRAM_ID,
     compressionProgram: LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
-    systemProgram: SystemProgram.programId, 
+    systemProgram: SystemProgram.programId,
+    // Signer (walletPublicKey) must be leafOwner or leafDelegate
   };
 
   const burnInstructionArgs = {
@@ -384,10 +420,9 @@ export async function burnCNft(
   const burnInstruction = createBubblegumBurnInstruction(
     burnInstructionAccounts,
     burnInstructionArgs,
-    anchorRemainingAccounts // Pass as the third argument
+    anchorRemainingAccounts
   );
 
   const instructions: TransactionInstruction[] = [burnInstruction];
   return sendTransaction(instructions, connection, wallet);
 }
-
