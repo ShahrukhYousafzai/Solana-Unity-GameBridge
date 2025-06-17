@@ -2,15 +2,34 @@
 import type { HeliusAsset, Nft, CNft, SplToken, Asset } from "@/types/solana";
 import { PublicKey } from "@solana/web3.js";
 
-const getAssetsByOwner = async (ownerAddress: string, rpcUrl: string): Promise<HeliusAsset[]> => {
-  const response = await fetch(rpcUrl, { // Use dynamic rpcUrl
+export interface HeliusAssetProof {
+  root: string;
+  proof: string[]; // Array of public key strings
+  leaf: string;
+  tree_id: string;
+  node_index: number;
+}
+
+const callHeliusApi = async (rpcUrl: string, body: object): Promise<any> => {
+  const response = await fetch(rpcUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
+    body: JSON.stringify(body),
+  });
+  const data = await response.json();
+  if (data.error) {
+    throw new Error(`Helius API Error: ${data.error.message}`);
+  }
+  return data.result;
+};
+
+
+const getAssetsByOwner = async (ownerAddress: string, rpcUrl: string): Promise<HeliusAsset[]> => {
+  const result = await callHeliusApi(rpcUrl, {
       jsonrpc: "2.0",
-      id: "solblaze-rpc",
+      id: "solblaze-rpc-getAssetsByOwner",
       method: "getAssetsByOwner",
       params: {
         ownerAddress,
@@ -23,13 +42,23 @@ const getAssetsByOwner = async (ownerAddress: string, rpcUrl: string): Promise<H
           showCollectionMetadata: true,
         }
       },
-    }),
+    });
+  return result.items || [];
+};
+
+export const getHeliusAssetProof = async (assetId: string, rpcUrl: string): Promise<HeliusAssetProof> => {
+  const result = await callHeliusApi(rpcUrl, {
+    jsonrpc: '2.0',
+    id: 'solblaze-rpc-getAssetProof',
+    method: 'getAssetProof',
+    params: {
+      id: assetId,
+    },
   });
-  const data = await response.json();
-  if (data.error) {
-    throw new Error(`Helius API Error: ${data.error.message}`);
+  if (!result || !result.root || !result.proof) {
+    throw new Error('Failed to retrieve valid asset proof from Helius.');
   }
-  return data.result.items || [];
+  return result as HeliusAssetProof;
 };
 
 
@@ -60,7 +89,7 @@ const normalizeHeliusAsset = (heliusAsset: HeliusAsset): Asset | null => {
         compression: {
           compressed: true,
           tree: heliusAsset.compression.tree,
-          leafId: heliusAsset.compression.leaf_id,
+          leafId: heliusAsset.compression.leaf_id, // Helius uses leaf_id, type uses leafId
         },
         collection,
         creators: heliusAsset.creators,

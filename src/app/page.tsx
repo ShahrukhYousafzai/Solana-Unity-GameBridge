@@ -17,11 +17,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { getTransactionExplorerUrl, getAddressExplorerUrl } from "@/utils/explorer"; // Added getAddressExplorerUrl
+import { getTransactionExplorerUrl, getAddressExplorerUrl } from "@/utils/explorer";
 import { transferNft, transferSplToken, burnNft, burnSplToken, transferCNft, burnCNft } from "@/lib/solana/transactions";
 import { RefreshCw, Package, PackageSearch, CoinsIcon } from "lucide-react";
-import { useNetwork } from "@/contexts/NetworkContext"; // Import useNetwork
-import { NetworkSwitcher } from "@/components/NetworkSwitcher"; // Import NetworkSwitcher
+import { useNetwork } from "@/contexts/NetworkContext";
+import { NetworkSwitcher } from "@/components/NetworkSwitcher";
 
 const ConnectWalletButton = dynamic(
   () => import("@/components/ConnectWalletButton").then((mod) => mod.ConnectWalletButton),
@@ -36,7 +36,7 @@ export default function HomePage() {
   const wallet = useWallet();
   const { publicKey, sendTransaction, connected } = wallet;
   const { toast } = useToast();
-  const { currentNetwork, rpcUrl } = useNetwork(); // Get network and rpcUrl from context
+  const { currentNetwork, rpcUrl } = useNetwork();
 
   const [nfts, setNfts] = useState<Nft[]>([]);
   const [cnfts, setCnfts] = useState<CNft[]>([]);
@@ -50,7 +50,7 @@ export default function HomePage() {
   const selectedAsset = useMemo(() => allFetchedAssets.find(a => a.id === selectedAssetId) || null, [selectedAssetId, allFetchedAssets]);
 
   const loadAssets = useCallback(async () => {
-    if (!publicKey || !rpcUrl) { // Ensure rpcUrl is available
+    if (!publicKey || !rpcUrl) {
       setNfts([]);
       setCnfts([]);
       setTokens([]);
@@ -60,7 +60,7 @@ export default function HomePage() {
     setIsLoadingAssets(true);
     setSelectedAssetId(null); 
     try {
-      const { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens } = await fetchAssetsForOwner(publicKey.toBase58(), rpcUrl); // Pass rpcUrl
+      const { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens } = await fetchAssetsForOwner(publicKey.toBase58(), rpcUrl);
       setNfts(fetchedNfts);
       setCnfts(fetchedCnfts);
       setTokens(fetchedTokens);
@@ -72,7 +72,7 @@ export default function HomePage() {
     } finally {
       setIsLoadingAssets(false);
     }
-  }, [publicKey, toast, rpcUrl, currentNetwork]); // Add rpcUrl and currentNetwork to dependencies
+  }, [publicKey, toast, rpcUrl, currentNetwork]);
 
   useEffect(() => {
     if (connected && publicKey) {
@@ -83,7 +83,7 @@ export default function HomePage() {
       setTokens([]);
       setSelectedAssetId(null);
     }
-  }, [connected, publicKey, loadAssets, currentNetwork]); // Add currentNetwork to trigger reload on network change
+  }, [connected, publicKey, loadAssets, currentNetwork]);
 
   const handleConfirmTransfer = useCallback(async (recipientAddress: string, amount?: number) => {
     if (!selectedAsset || !publicKey || !sendTransaction) {
@@ -97,7 +97,7 @@ export default function HomePage() {
       if (selectedAsset.type === "nft") {
         signature = await transferNft(connection, wallet, selectedAsset as Nft, recipientPublicKey);
       } else if (selectedAsset.type === "cnft") {
-         signature = await transferCNft(connection, wallet, selectedAsset as CNft, recipientPublicKey);
+         signature = await transferCNft(connection, wallet, selectedAsset as CNft, recipientPublicKey, rpcUrl);
       } else if (selectedAsset.type === "token") {
         if (typeof amount !== 'number' || amount <= 0) {
           toast({ title: "Error", description: "Invalid amount for token transfer.", variant: "destructive" });
@@ -119,7 +119,7 @@ export default function HomePage() {
       console.error("Transfer failed:", error);
       toast({ title: "Transfer Failed", description: error.message, variant: "destructive" });
     }
-  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets, currentNetwork]); // Added currentNetwork
+  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets, currentNetwork, rpcUrl]);
 
   const handleConfirmBurn = useCallback(async (amount?: number) => {
     if (!selectedAsset || !publicKey || !sendTransaction) {
@@ -132,7 +132,7 @@ export default function HomePage() {
       if (selectedAsset.type === "nft") {
         signature = await burnNft(connection, wallet, selectedAsset as Nft);
       } else if (selectedAsset.type === "cnft") {
-         signature = await burnCNft(connection, wallet, selectedAsset as CNft);
+         signature = await burnCNft(connection, wallet, selectedAsset as CNft, rpcUrl);
       } else if (selectedAsset.type === "token") {
         if (typeof amount !== 'number' || amount <= 0) {
           toast({ title: "Error", description: "Invalid amount for token burn.", variant: "destructive" });
@@ -154,7 +154,7 @@ export default function HomePage() {
       console.error("Burn failed:", error);
       toast({ title: "Burn Failed", description: error.message, variant: "destructive" });
     }
-  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets, currentNetwork]); // Added currentNetwork
+  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets, currentNetwork, rpcUrl]);
   
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -188,7 +188,7 @@ export default function HomePage() {
         delete (window as any).burnSelectedAsset;
       }
     };
-  }, [selectedAsset, handleConfirmTransfer, handleConfirmBurn]);
+  }, [selectedAsset, handleConfirmTransfer, handleConfirmBurn, toast]);
 
   const handleSelectAsset = (assetId: string | null) => {
     setSelectedAssetId(assetId);
@@ -217,7 +217,7 @@ export default function HomePage() {
     <div className="min-h-screen flex flex-col bg-background text-foreground">
       <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container flex h-20 items-center justify-between px-4 md:px-6">
-          <div className="flex items-center gap-4"> {/* Increased gap for NetworkSwitcher */}
+          <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <svg width="32" height="32" viewBox="0 0 100 100" fill="hsl(var(--primary))" xmlns="http://www.w3.org/2000/svg">
                 <path d="M50 0L61.226 23.407L87.364 26.795L70.957 44.09L73.607 70.039L50 58.36L26.393 70.039L29.043 44.09L12.636 26.795L38.774 23.407L50 0ZM50 28.778L43.111 54.444H71.111L64.222 28.778H50ZM28.889 60L35.778 85.667L50 73.333L64.222 85.667L71.111 60H28.889Z"/>
@@ -268,7 +268,7 @@ export default function HomePage() {
                   asset={selectedAsset}
                   onTransferClick={() => setIsTransferModalOpen(true)}
                   onBurnClick={() => setIsBurnModalOpen(true)}
-                  currentNetwork={currentNetwork} // Pass currentNetwork
+                  currentNetwork={currentNetwork}
                 />
               </section>
             )}

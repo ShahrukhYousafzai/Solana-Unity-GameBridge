@@ -1,3 +1,4 @@
+
 import {
   Connection,
   PublicKey,
@@ -5,11 +6,13 @@ import {
   SystemProgram,
   sendAndConfirmTransaction,
   LAMPORTS_PER_SOL,
+  VersionedTransaction,
+  TransactionMessage,
 } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
-  createTransferInstruction,
-  createBurnInstruction,
+  createTransferInstruction as createSplTransferInstruction,
+  createBurnInstruction as createSplBurnInstruction,
   createCloseAccountInstruction,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -17,8 +20,14 @@ import {
 } from "@solana/spl-token";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import type { Asset, Nft, CNft, SplToken } from "@/types/solana";
-import { PROGRAM_ID as BUBBLEGUM_PROGRAM_ID,ผู้ชมcreateBurnInstruction as createBubblegumBurnInstruction } from "@metaplex-foundation/mpl-bubblegum";
+import { 
+  PROGRAM_ID as BUBBLEGUM_PROGRAM_ID, 
+  createBurnInstruction as createBubblegumBurnInstruction,
+  createTransferInstruction as createBubblegumTransferInstruction,
+} from "@metaplex-foundation/mpl-bubblegum";
 import {SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, SPL_NOOP_PROGRAM_ID} from "@solana/spl-account-compression";
+import { getHeliusAssetProof } from "@/lib/helius";
+import BN from "bn.js";
 
 // Helper to send transaction
 async function sendTransaction(
@@ -72,7 +81,7 @@ export async function transferNft(
   }
   
   transaction.add(
-    createTransferInstruction(
+    createSplTransferInstruction(
       sourceAta,
       recipientAta,
       wallet.publicKey,
@@ -114,7 +123,7 @@ export async function transferSplToken(
   }
 
   transaction.add(
-    createTransferInstruction(
+    createSplTransferInstruction(
       sourceAta,
       recipientAta,
       wallet.publicKey,
@@ -137,7 +146,7 @@ export async function burnNft(
   const ownerTokenAccount = nft.tokenAddress ? new PublicKey(nft.tokenAddress) : getAssociatedTokenAddressSync(mintPublicKey, wallet.publicKey);
 
   const transaction = new Transaction().add(
-    createBurnInstruction(
+    createSplBurnInstruction(
       ownerTokenAccount, // account to burn from
       mintPublicKey,     // mint
       wallet.publicKey,  // owner
@@ -149,8 +158,6 @@ export async function burnNft(
       wallet.publicKey      // owner of account to close
     )
   );
-  // Note: Burning the mint itself requires mint authority and is a separate step, typically not done by users.
-  // The prompt "close account + burn mint" is ambitious. This implements burning the token and closing the ATA.
   return sendTransaction(transaction, connection, wallet);
 }
 
@@ -168,14 +175,13 @@ export async function burnSplToken(
   const ownerTokenAccount = token.tokenAddress ? new PublicKey(token.tokenAddress) : getAssociatedTokenAddressSync(mintPublicKey, wallet.publicKey);
   
   const transaction = new Transaction().add(
-    createBurnInstruction(
+    createSplBurnInstruction(
       ownerTokenAccount,
       mintPublicKey,
       wallet.publicKey,
       rawAmount
     )
   );
-  // If burning the entire balance, the ATA can be closed.
   if (rawAmount === token.rawBalance) {
      transaction.add(
         createCloseAccountInstruction(
@@ -190,74 +196,94 @@ export async function burnSplToken(
 }
 
 
-// Transfer cNFT (Compressed NFT) - Placeholder, requires Bubblegum SDK and Helius for proofs
+// Transfer cNFT (Compressed NFT)
 export async function transferCNft(
   connection: Connection,
   wallet: WalletContextState,
   cnft: CNft,
-  recipientAddress: PublicKey
+  recipientAddress: PublicKey,
+  rpcUrl: string // Pass rpcUrl for Helius calls
 ): Promise<string> {
-  if (!wallet.publicKey) throw new Error("Wallet not connected.");
-  // This is a complex transaction requiring:
-  // 1. Fetching asset proof from Helius (getAssetProof RPC method).
-  // 2. Building the transfer instruction using @metaplex-foundation/mpl-bubblegum.
-  // Example structure:
-  // const assetProof = await heliusGetAssetProof(cnft.id); // You'll need to implement this Helius call
-  // const { compression, creators, ownership } = cnft.rawHeliusAsset;
-  // if (!compression || !creators || !ownership) throw new Error("Missing cNFT data");
-  //
-  // const transferInstruction = createTransferInstruction({
-  //   treeAccount: new PublicKey(compression.tree),
-  //   leafOwner: wallet.publicKey,
-  //   leafDelegate: wallet.publicKey, // Or actual delegate if set
-  //   newLeafOwner: recipientAddress,
-  //   merkleTree: new PublicKey(compression.tree),
-  //   root: new PublicKey(assetProof.root),
-  //   dataHash: new PublicKey(compression.data_hash),
-  //   creatorHash: new PublicKey(compression.creator_hash),
-  //   nonce: प्रमाण(compression.leaf_id), // leaf_id is the nonce (index)
-  //   index: compression.leaf_id,
-  //   // ... proofs from assetProof.proof
-  // });
-  // const transaction = new Transaction().add(transferInstruction);
-  // return sendTransaction(transaction, connection, wallet);
+  if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or doesn't support signing.");
+  if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing.");
 
-  // For now, this is a placeholder.
-  console.warn("cNFT transfer is complex and requires full Bubblegum integration with Helius proofs. This is a placeholder.");
-  throw new Error("cNFT transfer not fully implemented yet. See Helius & Bubblegum docs.");
+  const assetProof = await getHeliusAssetProof(cnft.id, rpcUrl);
+  
+  const { compression, creators, ownership } = cnft.rawHeliusAsset;
+  if (!compression.data_hash || !compression.creator_hash || !compression.tree) {
+    throw new Error("Essential compression data (data_hash, creator_hash, or tree) is missing.");
+  }
+
+  const treeAccount = new PublicKey(compression.tree);
+  const leafOwner = new PublicKey(ownership.owner); // Should be wallet.publicKey
+  const leafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : leafOwner;
+
+  const transferInstruction = createBubblegumTransferInstruction(
+    {
+      treeAccount,
+      leafOwner,
+      leafDelegate,
+      newLeafOwner: recipientAddress,
+      merkleTree: treeAccount, 
+      logWrapper: SPL_NOOP_PROGRAM_ID,
+      compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
+      anchorRemainingAccounts: assetProof.proof.map(p => ({ pubkey: new PublicKey(p), isSigner: false, isWritable: false })),
+    },
+    {
+      root: new PublicKey(assetProof.root).toBuffer(),
+      dataHash: new PublicKey(compression.data_hash).toBuffer(),
+      creatorHash: new PublicKey(compression.creator_hash).toBuffer(),
+      nonce: new BN(cnft.compression.leafId),
+      index: cnft.compression.leafId,
+    }
+  );
+
+  const transaction = new Transaction().add(transferInstruction);
+  return sendTransaction(transaction, connection, wallet);
 }
 
 
-// Burn cNFT (Compressed NFT) - Placeholder, requires Bubblegum SDK and Helius for proofs
+// Burn cNFT (Compressed NFT)
 export async function burnCNft(
   connection: Connection,
   wallet: WalletContextState,
-  cnft: CNft
+  cnft: CNft,
+  rpcUrl: string // Pass rpcUrl for Helius calls
 ): Promise<string> {
-  if (!wallet.publicKey) throw new Error("Wallet not connected.");
-  // Similar to transfer, requires asset proof and Bubblegum's burn instruction.
-  // Example structure:
-  // const assetProof = await heliusGetAssetProof(cnft.id);
-  // const { compression } = cnft.rawHeliusAsset;
-  // if (!compression) throw new Error("Missing cNFT compression data");
+  if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or doesn't support signing.");
+  if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing.");
 
-  // const burnInstruction = createBubblegumBurnInstruction({
-  //   treeAccount: new PublicKey(compression.tree),
-  //   leafOwner: wallet.publicKey,
-  //   leafDelegate: wallet.publicKey,
-  //   merkleTree: new PublicKey(compression.tree),
-  //   root: new PublicKey(assetProof.root),
-  //   dataHash: new PublicKey(compression.data_hash),
-  //   creatorHash: new PublicKey(compression.creator_hash),
-  //   nonce: प्रमाण(compression.leaf_id),
-  //   index: compression.leaf_id,
-  //   // ... proofs from assetProof.proof
-  // }, BUBBLEGUM_PROGRAM_ID);
-  //
-  // const transaction = new Transaction().add(burnInstruction);
-  // return sendTransaction(transaction, connection, wallet);
+  const assetProof = await getHeliusAssetProof(cnft.id, rpcUrl);
+  const { compression, ownership } = cnft.rawHeliusAsset;
 
-  // For now, this is a placeholder.
-  console.warn("cNFT burn is complex and requires full Bubblegum integration with Helius proofs. This is a placeholder.");
-  throw new Error("cNFT burn not fully implemented yet. See Helius & Bubblegum docs.");
+  if (!compression.data_hash || !compression.creator_hash || !compression.tree) {
+    throw new Error("Essential compression data (data_hash, creator_hash, or tree) is missing.");
+  }
+  
+  const treeAccount = new PublicKey(compression.tree);
+  const leafOwner =  new PublicKey(ownership.owner); // Should be wallet.publicKey
+  const leafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : leafOwner;
+
+
+  const burnInstruction = createBubblegumBurnInstruction(
+    {
+      treeAccount,
+      leafOwner,
+      leafDelegate,
+      merkleTree: treeAccount,
+      logWrapper: SPL_NOOP_PROGRAM_ID,
+      compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
+      anchorRemainingAccounts: assetProof.proof.map(p => ({ pubkey: new PublicKey(p), isSigner: false, isWritable: false })),
+    },
+    {
+      root: new PublicKey(assetProof.root).toBuffer(),
+      dataHash: new PublicKey(compression.data_hash).toBuffer(),
+      creatorHash: new PublicKey(compression.creator_hash).toBuffer(),
+      nonce: new BN(cnft.compression.leafId),
+      index: cnft.compression.leafId,
+    }
+  );
+
+  const transaction = new Transaction().add(burnInstruction);
+  return sendTransaction(transaction, connection, wallet);
 }
