@@ -258,13 +258,12 @@ export async function transferCNft(
   rpcUrl: string
 ): Promise<string> {
   const walletPublicKey = wallet.publicKey; 
-  const walletSignTransaction = wallet.signTransaction;
 
-  if (!walletPublicKey || !walletSignTransaction) {
-    throw new Error("Wallet not connected or doesn't support signing.");
+  if (!walletPublicKey) {
+    throw new Error("Wallet not connected for cNFT transfer.");
   }
   if (!(walletPublicKey instanceof PublicKey)) {
-    throw new Error("Invalid wallet public key. Expected instance of PublicKey.");
+    throw new Error("Invalid wallet public key. Expected instance of PublicKey for cNFT transfer.");
   }
   if (!(recipientAddress instanceof PublicKey)) {
     throw new Error('Recipient address is not a valid PublicKey instance for cNFT transfer.');
@@ -272,42 +271,47 @@ export async function transferCNft(
   if (!(BUBBLEGUM_PROGRAM_ID instanceof PublicKey)) {
     throw new Error("Critical: BUBBLEGUM_PROGRAM_ID from SDK is not a valid PublicKey.");
   }
+  if (!(LOCAL_SPL_NOOP_PROGRAM_ID instanceof PublicKey)) throw new Error("Critical: LOCAL_SPL_NOOP_PROGRAM_ID is not a PublicKey.");
+  if (!(LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID instanceof PublicKey)) throw new Error("Critical: LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID is not a PublicKey.");
+  if (!(SystemProgram.programId instanceof PublicKey)) throw new Error("Critical: SystemProgram.programId is not a PublicKey.");
 
 
-  if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing.");
+  if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing for transfer.");
 
   const assetProof = await getHeliusAssetProof(cnft.id, rpcUrl);
-  if (!assetProof || !assetProof.root || !assetProof.proof || assetProof.proof.some(p => typeof p !== 'string' || !p.trim())) {
-    throw new Error('Failed to retrieve valid asset proof from Helius (proof, root missing, or proof elements invalid).');
+  if (!assetProof || !assetProof.root || !assetProof.proof || assetProof.proof.length === 0 || !assetProof.tree_id) {
+    throw new Error('Failed to retrieve valid asset proof from Helius for transfer (proof, root, tree_id missing, or proof array empty).');
   }
+   if (typeof assetProof.tree_id !== 'string' || !assetProof.tree_id.trim()) {
+    throw new Error('Asset proof contains an invalid tree_id.');
+  }
+  assetProof.proof.forEach((p, idx) => {
+    if (typeof p !== 'string' || !p.trim()) {
+      throw new Error(`Proof element at index ${idx} is invalid (not a non-empty string). Received: ${p}`);
+    }
+  });
   
   const { compression, ownership } = cnft.rawHeliusAsset;
-  if (!compression || !compression.data_hash || !compression.creator_hash || typeof compression.tree !== 'string' || !compression.tree.trim()) {
-    throw new Error("Essential compression data (data_hash, creator_hash, or tree) is missing or invalid.");
+  if (!compression || !compression.data_hash || !compression.creator_hash ) {
+    throw new Error("Essential compression data (data_hash or creator_hash) is missing from rawHeliusAsset.");
   }
   if (typeof ownership.owner !== 'string' || !ownership.owner.trim()) {
-    throw new Error("Essential ownership data (owner) is missing or invalid.");
+    throw new Error("Essential ownership data (owner) is missing or invalid from rawHeliusAsset.");
   }
   if (ownership.delegate && (typeof ownership.delegate !== 'string' || !ownership.delegate.trim())) {
-    throw new Error("Ownership delegate data is invalid (must be non-empty string if present).");
+    throw new Error("Ownership delegate data is invalid (must be non-empty string if present) from rawHeliusAsset.");
   }
 
-  const merkleTreeKey = new PublicKey(compression.tree);
+  const merkleTreeKey = new PublicKey(assetProof.tree_id); // Use tree_id from proof
   const leafOwner = new PublicKey(ownership.owner); 
   const leafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : leafOwner;
 
-  if (!(merkleTreeKey instanceof PublicKey)) throw new Error("merkleTreeKey is not a PublicKey.");
+  if (!(merkleTreeKey instanceof PublicKey)) throw new Error("merkleTreeKey (from proof tree_id) is not a PublicKey.");
   if (!(leafOwner instanceof PublicKey)) throw new Error("leafOwner is not a PublicKey.");
   if (!(leafDelegate instanceof PublicKey)) throw new Error("leafDelegate is not a PublicKey.");
-  if (!(LOCAL_SPL_NOOP_PROGRAM_ID instanceof PublicKey)) throw new Error("LOCAL_SPL_NOOP_PROGRAM_ID is not a PublicKey.");
-  if (!(LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID instanceof PublicKey)) throw new Error("LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID is not a PublicKey.");
-  if (!(SystemProgram.programId instanceof PublicKey)) throw new Error("SystemProgram.programId is not a PublicKey.");
 
 
-  const anchorRemainingAccounts: AccountMeta[] = assetProof.proof.map((p, idx) => {
-    if (typeof p !== 'string' || !p.trim()) { 
-        throw new Error(`Proof element at index ${idx} is invalid (not a non-empty string). Received: ${p}`);
-    }
+  const anchorRemainingAccounts: AccountMeta[] = assetProof.proof.map((p) => {
     const pubkey = new PublicKey(p);
     return { pubkey, isSigner: false, isWritable: false };
   });
@@ -330,14 +334,14 @@ export async function transferCNft(
     index: cnft.compression.leafId,
   };
 
-  const transferInstruction = createBubblegumTransferInstruction(
+  let transferInstruction = createBubblegumTransferInstruction(
     transferInstructionAccounts,
     transferInstructionArgs,
     anchorRemainingAccounts 
   );
-
-  if (!(transferInstruction.programId instanceof PublicKey)) {
-    console.warn("Warning: programId from createBubblegumTransferInstruction is not a PublicKey. Overwriting with BUBBLEGUM_PROGRAM_ID.");
+  
+  if (!transferInstruction.programId || !(transferInstruction.programId instanceof PublicKey)) {
+    console.warn("Warning: programId from createBubblegumTransferInstruction was invalid. Overwriting with BUBBLEGUM_PROGRAM_ID.");
     transferInstruction.programId = BUBBLEGUM_PROGRAM_ID;
   }
 
@@ -355,52 +359,56 @@ export async function burnCNft(
   rpcUrl: string 
 ): Promise<string> {
   const walletPublicKey = wallet.publicKey;
-  const walletSignTransaction = wallet.signTransaction;
 
-  if (!walletPublicKey || !walletSignTransaction) {
-    throw new Error("Wallet not connected or doesn't support signing.");
+  if (!walletPublicKey) {
+    throw new Error("Wallet not connected for cNFT burn.");
   }
    if (!(walletPublicKey instanceof PublicKey)) {
-    throw new Error("Invalid wallet public key. Expected instance of PublicKey.");
+    throw new Error("Invalid wallet public key. Expected instance of PublicKey for cNFT burn.");
   }
   if (!(BUBBLEGUM_PROGRAM_ID instanceof PublicKey)) {
     throw new Error("Critical: BUBBLEGUM_PROGRAM_ID from SDK is not a valid PublicKey.");
   }
+  if (!(LOCAL_SPL_NOOP_PROGRAM_ID instanceof PublicKey)) throw new Error("Critical: LOCAL_SPL_NOOP_PROGRAM_ID is not a PublicKey.");
+  if (!(LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID instanceof PublicKey)) throw new Error("Critical: LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID is not a PublicKey.");
+  if (!(SystemProgram.programId instanceof PublicKey)) throw new Error("Critical: SystemProgram.programId is not a PublicKey.");
 
-  if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing.");
+  if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing for burn.");
 
   const assetProof = await getHeliusAssetProof(cnft.id, rpcUrl);
-   if (!assetProof || !assetProof.root || !assetProof.proof || assetProof.proof.some(p => typeof p !== 'string' || !p.trim())) {
-    throw new Error('Failed to retrieve valid asset proof from Helius for burn (proof, root missing, or proof elements invalid).');
+   if (!assetProof || !assetProof.root || !assetProof.proof || assetProof.proof.length === 0 || !assetProof.tree_id) {
+    throw new Error('Failed to retrieve valid asset proof from Helius for burn (proof, root, tree_id missing, or proof array empty).');
   }
-
-  const { compression, ownership } = cnft.rawHeliusAsset;
-
-  if (!compression || !compression.data_hash || !compression.creator_hash || typeof compression.tree !== 'string' || !compression.tree.trim()) {
-    throw new Error("Essential compression data (data_hash, creator_hash, or tree) is missing or invalid.");
+  if (typeof assetProof.tree_id !== 'string' || !assetProof.tree_id.trim()) {
+    throw new Error('Asset proof contains an invalid tree_id for burn.');
   }
-  if (typeof ownership.owner !== 'string' || !ownership.owner.trim()) {
-    throw new Error("Essential ownership data (owner) is missing or invalid.");
-  }
-  if (ownership.delegate && (typeof ownership.delegate !== 'string' || !ownership.delegate.trim())) {
-    throw new Error("Ownership delegate data is invalid (must be non-empty string if present).");
-  }
-  
-  const merkleTreeKey = new PublicKey(compression.tree);
-  const leafOwner =  new PublicKey(ownership.owner); 
-  const leafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : leafOwner;
-
-  if (!(merkleTreeKey instanceof PublicKey)) throw new Error("merkleTreeKey is not a PublicKey for burn.");
-  if (!(leafOwner instanceof PublicKey)) throw new Error("leafOwner is not a PublicKey for burn.");
-  if (!(leafDelegate instanceof PublicKey)) throw new Error("leafDelegate is not a PublicKey for burn.");
-  if (!(LOCAL_SPL_NOOP_PROGRAM_ID instanceof PublicKey)) throw new Error("LOCAL_SPL_NOOP_PROGRAM_ID is not a PublicKey for burn.");
-  if (!(LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID instanceof PublicKey)) throw new Error("LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID is not a PublicKey for burn.");
-  if (!(SystemProgram.programId instanceof PublicKey)) throw new Error("SystemProgram.programId is not a PublicKey for burn.");
-
-  const anchorRemainingAccounts: AccountMeta[] = assetProof.proof.map((p, idx) => {
+  assetProof.proof.forEach((p, idx) => {
      if (typeof p !== 'string' || !p.trim()) {
         throw new Error(`Proof element at index ${idx} is invalid (not a non-empty string). Received: ${p}`);
     }
+  });
+
+  const { compression, ownership } = cnft.rawHeliusAsset;
+
+  if (!compression || !compression.data_hash || !compression.creator_hash ) {
+    throw new Error("Essential compression data (data_hash or creator_hash) is missing from rawHeliusAsset for burn.");
+  }
+  if (typeof ownership.owner !== 'string' || !ownership.owner.trim()) {
+    throw new Error("Essential ownership data (owner) is missing or invalid from rawHeliusAsset for burn.");
+  }
+  if (ownership.delegate && (typeof ownership.delegate !== 'string' || !ownership.delegate.trim())) {
+    throw new Error("Ownership delegate data is invalid (must be non-empty string if present) from rawHeliusAsset for burn.");
+  }
+  
+  const merkleTreeKey = new PublicKey(assetProof.tree_id); // Use tree_id from proof
+  const leafOwner =  new PublicKey(ownership.owner); 
+  const leafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : leafOwner;
+
+  if (!(merkleTreeKey instanceof PublicKey)) throw new Error("merkleTreeKey (from proof tree_id) is not a PublicKey for burn.");
+  if (!(leafOwner instanceof PublicKey)) throw new Error("leafOwner is not a PublicKey for burn.");
+  if (!(leafDelegate instanceof PublicKey)) throw new Error("leafDelegate is not a PublicKey for burn.");
+
+  const anchorRemainingAccounts: AccountMeta[] = assetProof.proof.map((p) => {
     const pubkey = new PublicKey(p);
     return { pubkey, isSigner: false, isWritable: false };
   });
@@ -428,8 +436,8 @@ export async function burnCNft(
     anchorRemainingAccounts
   );
   
-  if (!(burnInstruction.programId instanceof PublicKey)) {
-    console.warn("Warning: programId from createBubblegumBurnInstruction is not a PublicKey. Overwriting with BUBBLEGUM_PROGRAM_ID.");
+  if (!burnInstruction.programId || !(burnInstruction.programId instanceof PublicKey)) {
+    console.warn("Warning: programId from createBubblegumBurnInstruction was invalid. Overwriting with BUBBLEGUM_PROGRAM_ID.");
     burnInstruction.programId = BUBBLEGUM_PROGRAM_ID;
   }
 
