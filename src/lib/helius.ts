@@ -20,7 +20,16 @@ const callHeliusApi = async (rpcUrl: string, body: object): Promise<any> => {
   });
   const data = await response.json();
   if (data.error) {
-    throw new Error(`Helius API Error: ${data.error.message}`);
+    let message = `Helius API Error: ${data.error.message}`;
+    const errorMessageLower = data.error.message?.toLowerCase();
+    if (errorMessageLower?.includes("access forbidden") || 
+        errorMessageLower?.includes("unauthorized") ||
+        data.error.code === 403 || // HTTP Forbidden (though Helius might use custom JSON-RPC codes)
+        (data.error.code === -32603 && errorMessageLower?.includes("forbidden")) // Example of specific code + message
+    ) {
+      message += " This often indicates an issue with your Helius API key. Please ensure NEXT_PUBLIC_HELIUS_API_KEY is set correctly in your environment and is valid.";
+    }
+    throw new Error(message);
   }
   return data.result;
 };
@@ -46,19 +55,27 @@ const getAssetsByOwner = async (ownerAddress: string, rpcUrl: string): Promise<H
   return result.items || [];
 };
 
-export const getHeliusAssetProof = async (assetId: string, rpcUrl: string): Promise<HeliusAssetProof> => {
-  const result = await callHeliusApi(rpcUrl, {
-    jsonrpc: '2.0',
-    id: 'solblaze-rpc-getAssetProof',
-    method: 'getAssetProof',
-    params: {
-      id: assetId,
-    },
-  });
-  if (!result || !result.root || !result.proof) {
-    throw new Error('Failed to retrieve valid asset proof from Helius.');
+export const getHeliusAssetProof = async (assetId: string, rpcUrl: string): Promise<HeliusAssetProof | null> => {
+  try {
+    const result = await callHeliusApi(rpcUrl, {
+      jsonrpc: '2.0',
+      id: 'solblaze-rpc-getAssetProof',
+      method: 'getAssetProof',
+      params: {
+        id: assetId,
+      },
+    });
+    if (!result || !result.root || !result.proof) {
+      // It's possible Helius returns a successful response with no proof for some assets (e.g., non-cNFTs)
+      // Or if the asset ID doesn't exist or isn't a cNFT.
+      console.warn(`No valid asset proof returned from Helius for asset ID: ${assetId}. Result:`, result);
+      return null;
+    }
+    return result as HeliusAssetProof;
+  } catch (error) {
+    console.error(`Error fetching Helius asset proof for ${assetId}:`, error);
+    throw error; // Re-throw the error to be handled by the caller
   }
-  return result as HeliusAssetProof;
 };
 
 
@@ -191,3 +208,4 @@ export const fetchAssetsForOwner = async (
   }
   return { nfts, cnfts, tokens };
 };
+
