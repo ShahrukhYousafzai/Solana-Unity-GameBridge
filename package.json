@@ -47,6 +47,7 @@
     "@solana/wallet-adapter-solflare": "^0.6.28",
     "@solana/web3.js": "^1.95.1",
     "bn.js": "^5.2.1",
+    "bs58": "^5.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^3.6.0",
@@ -67,6 +68,7 @@
   },
   "devDependencies": {
     "@types/bn.js": "^5.1.5",
+    "@types/bs58": "^4.0.4",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
