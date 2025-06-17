@@ -24,8 +24,8 @@ const callHeliusApi = async (rpcUrl: string, body: object): Promise<any> => {
     const errorMessageLower = data.error.message?.toLowerCase();
     if (errorMessageLower?.includes("access forbidden") || 
         errorMessageLower?.includes("unauthorized") ||
-        data.error.code === 403 || // HTTP Forbidden (though Helius might use custom JSON-RPC codes)
-        (data.error.code === -32603 && errorMessageLower?.includes("forbidden")) // Example of specific code + message
+        data.error.code === 403 || 
+        (data.error.code === -32603 && errorMessageLower?.includes("forbidden")) 
     ) {
       message += " This often indicates an issue with your Helius API key. Please ensure NEXT_PUBLIC_HELIUS_API_KEY is set correctly in your environment and is valid.";
     }
@@ -46,7 +46,6 @@ const getAssetsByOwner = async (ownerAddress: string, rpcUrl: string): Promise<H
         limit: 1000,
         displayOptions: {
           showFungible: true, 
-          // showNativeBalance: false, // Removed as it's an unknown field
           showUnverifiedCollections: true,
           showCollectionMetadata: true,
         }
@@ -66,15 +65,13 @@ export const getHeliusAssetProof = async (assetId: string, rpcUrl: string): Prom
       },
     });
     if (!result || !result.root || !result.proof) {
-      // It's possible Helius returns a successful response with no proof for some assets (e.g., non-cNFTs)
-      // Or if the asset ID doesn't exist or isn't a cNFT.
       console.warn(`No valid asset proof returned from Helius for asset ID: ${assetId}. Result:`, result);
       return null;
     }
     return result as HeliusAssetProof;
   } catch (error) {
     console.error(`Error fetching Helius asset proof for ${assetId}:`, error);
-    throw error; // Re-throw the error to be handled by the caller
+    throw error; 
   }
 };
 
@@ -106,7 +103,7 @@ const normalizeHeliusAsset = (heliusAsset: HeliusAsset): Asset | null => {
         compression: {
           compressed: true,
           tree: heliusAsset.compression.tree,
-          leafId: heliusAsset.compression.leaf_id, // Helius uses leaf_id, type uses leafId
+          leafId: heliusAsset.compression.leaf_id, 
         },
         collection,
         creators: heliusAsset.creators,
@@ -175,7 +172,7 @@ const normalizeHeliusAsset = (heliusAsset: HeliusAsset): Asset | null => {
 
 export const fetchAssetsForOwner = async (
   ownerAddress: string,
-  rpcUrl: string // Add rpcUrl parameter
+  rpcUrl: string 
 ): Promise<{ nfts: Nft[]; cnfts: CNft[]; tokens: SplToken[] }> => {
   try {
     new PublicKey(ownerAddress); 
@@ -184,7 +181,21 @@ export const fetchAssetsForOwner = async (
     return { nfts: [], cnfts: [], tokens: [] };
   }
 
-  const heliusAssets = await getAssetsByOwner(ownerAddress, rpcUrl); // Pass rpcUrl
+  let heliusAssets: HeliusAsset[] = [];
+  try {
+    heliusAssets = await getAssetsByOwner(ownerAddress, rpcUrl); 
+  } catch (error: any) {
+    const errorMessage = error.message?.toLowerCase() || "";
+    if (errorMessage.includes("access forbidden") || errorMessage.includes("unauthorized")) {
+      console.warn(
+        `Helius API Error: ${error.message}. This often indicates an issue with your Helius API key (NEXT_PUBLIC_HELIUS_API_KEY). ` +
+        "The app will proceed without Helius assets. Please check your API key configuration if you intend to use Helius."
+      );
+      return { nfts: [], cnfts: [], tokens: [] }; // Return empty assets on auth failure
+    }
+    // For other errors, re-throw to be handled by the caller (e.g., display toast)
+    throw error;
+  }
   
   const nfts: Nft[] = [];
   const cnfts: CNft[] = [];
