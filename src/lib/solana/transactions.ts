@@ -5,7 +5,8 @@ import {
   SystemProgram,
   VersionedTransaction,
   TransactionMessage,
-  type TransactionInstruction, 
+  type TransactionInstruction,
+  type AccountMeta,
 } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
@@ -66,19 +67,18 @@ async function sendTransaction(
   const latestBlockhash = await connection.getLatestBlockhash();
   
   // Ensure publicKey is still valid before creating message
-  if (!wallet.publicKey) { // Uses wallet.publicKey directly here, as it might have changed.
+  if (!wallet.publicKey) { 
     throw new Error("Wallet public key became undefined before transaction message creation.");
   }
 
   const messageV0 = new TransactionMessage({
-    payerKey: publicKey, // Use the captured publicKey for payer consistent with checks
+    payerKey: publicKey, 
     recentBlockhash: latestBlockhash.blockhash,
     instructions: instructions,
   }).compileToV0Message();
 
   const versionedTransaction = new VersionedTransaction(messageV0);
   
-  // Use the captured signTransaction
   const signedTransaction = await signTransaction(versionedTransaction); 
   
   const signature = await connection.sendTransaction(signedTransaction, {
@@ -108,6 +108,9 @@ export async function transferNft(
   recipientAddress: PublicKey
 ): Promise<string> {
   if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  if (!(recipientAddress instanceof PublicKey)) {
+    throw new Error('Recipient address is not a valid PublicKey instance for NFT transfer.');
+  }
 
   const mintPublicKey = new PublicKey(nft.id);
   const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, wallet.publicKey);
@@ -148,6 +151,9 @@ export async function transferSplToken(
   amount: number // UI amount, not raw
 ): Promise<string> {
   if (!wallet.publicKey) throw new Error("Wallet not connected.");
+  if (!(recipientAddress instanceof PublicKey)) {
+    throw new Error('Recipient address is not a valid PublicKey instance for SPL token transfer.');
+  }
 
   const mintPublicKey = new PublicKey(token.id);
   const rawAmount = BigInt(Math.round(amount * (10 ** token.decimals)));
@@ -277,12 +283,11 @@ export async function transferCNft(
     throw new Error("Ownership delegate data is invalid (must be non-empty string if present).");
   }
 
-
   const merkleTreeKey = new PublicKey(compression.tree);
   const leafOwner = new PublicKey(ownership.owner); 
   const leafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : leafOwner;
 
-  const anchorRemainingAccounts = assetProof.proof.map((p, idx) => {
+  const anchorRemainingAccounts: AccountMeta[] = assetProof.proof.map((p, idx) => {
     if (typeof p !== 'string' || !p.trim()) { 
         throw new Error(`Proof element at index ${idx} is invalid (not a non-empty string). Received: ${p}`);
     }
@@ -296,8 +301,7 @@ export async function transferCNft(
     merkleTree: merkleTreeKey,
     logWrapper: LOCAL_SPL_NOOP_PROGRAM_ID,
     compressionProgram: LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
-    systemProgram: SystemProgram.programId, // Explicitly provide SystemProgram ID
-    anchorRemainingAccounts: anchorRemainingAccounts,
+    systemProgram: SystemProgram.programId, 
   };
   
   const transferInstructionArgs = {
@@ -310,7 +314,8 @@ export async function transferCNft(
 
   const transferInstruction = createBubblegumTransferInstruction(
     transferInstructionAccounts,
-    transferInstructionArgs
+    transferInstructionArgs,
+    anchorRemainingAccounts // Pass as the third argument
   );
 
   const instructions: TransactionInstruction[] = [transferInstruction];
@@ -352,7 +357,7 @@ export async function burnCNft(
   const leafOwner =  new PublicKey(ownership.owner); 
   const leafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : leafOwner;
 
-  const anchorRemainingAccounts = assetProof.proof.map((p, idx) => {
+  const anchorRemainingAccounts: AccountMeta[] = assetProof.proof.map((p, idx) => {
      if (typeof p !== 'string' || !p.trim()) {
         throw new Error(`Proof element at index ${idx} is invalid (not a non-empty string). Received: ${p}`);
     }
@@ -365,8 +370,7 @@ export async function burnCNft(
     merkleTree: merkleTreeKey,
     logWrapper: LOCAL_SPL_NOOP_PROGRAM_ID,
     compressionProgram: LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
-    systemProgram: SystemProgram.programId, // Explicitly provide SystemProgram ID
-    anchorRemainingAccounts: anchorRemainingAccounts,
+    systemProgram: SystemProgram.programId, 
   };
 
   const burnInstructionArgs = {
@@ -379,9 +383,11 @@ export async function burnCNft(
   
   const burnInstruction = createBubblegumBurnInstruction(
     burnInstructionAccounts,
-    burnInstructionArgs
+    burnInstructionArgs,
+    anchorRemainingAccounts // Pass as the third argument
   );
 
   const instructions: TransactionInstruction[] = [burnInstruction];
   return sendTransaction(instructions, connection, wallet);
 }
+
