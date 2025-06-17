@@ -3,18 +3,15 @@ import {
   Connection,
   PublicKey,
   SystemProgram,
-  LAMPORTS_PER_SOL,
   VersionedTransaction,
   TransactionMessage,
-  type TransactionInstruction, // Import TransactionInstruction type
+  type TransactionInstruction, 
 } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
   createTransferInstruction as createSplTransferInstruction,
   createBurnInstruction as createSplBurnInstruction,
   createCloseAccountInstruction,
-  TOKEN_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID,
   createAssociatedTokenAccountInstruction,
 } from "@solana/spl-token";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
@@ -69,12 +66,12 @@ async function sendTransaction(
   const latestBlockhash = await connection.getLatestBlockhash();
   
   // Ensure publicKey is still valid before creating message
-  if (!wallet.publicKey) {
+  if (!wallet.publicKey) { // Uses wallet.publicKey directly here, as it might have changed.
     throw new Error("Wallet public key became undefined before transaction message creation.");
   }
 
   const messageV0 = new TransactionMessage({
-    payerKey: publicKey, // Use the captured publicKey
+    payerKey: publicKey, // Use the captured publicKey for payer consistent with checks
     recentBlockhash: latestBlockhash.blockhash,
     instructions: instructions,
   }).compileToV0Message();
@@ -233,7 +230,7 @@ export async function burnSplToken(
     )
   ];
 
-  if (rawAmount === token.rawBalance) { // If burning entire balance, also close account
+  if (rawAmount === token.rawBalance) { 
      instructions.push(
         createCloseAccountInstruction(
             ownerTokenAccount,    
@@ -256,56 +253,64 @@ export async function transferCNft(
   rpcUrl: string
 ): Promise<string> {
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or doesn't support signing.");
+  if (!(recipientAddress instanceof PublicKey)) {
+    throw new Error('Recipient address is not a valid PublicKey instance for cNFT transfer.');
+  }
   if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing.");
 
   const assetProof = await getHeliusAssetProof(cnft.id, rpcUrl);
   if (!assetProof || !assetProof.root || !assetProof.proof) {
     throw new Error('Failed to retrieve valid asset proof from Helius for transfer (proof or root missing).');
   }
-  if (assetProof.proof.some(p => !p)) {
-    throw new Error('Invalid asset proof: contains undefined or null proof elements.');
-  }
-  if (!assetProof.proof.length && cnft.rawHeliusAsset.compression.tree !== SystemProgram.programId.toBase58()) { 
-    // Only allow empty proof for certain "well-known" trees or if explicitly handled
-    // For now, require proof if tree is not system program (which indicates no compression/special case)
-    // This check might need adjustment based on specific cNFT standards or tree types
-     console.warn("Asset proof is empty for non-system tree. This might be unexpected for standard cNFTs.", cnft.rawHeliusAsset.compression.tree);
-     // Depending on strictness, you might throw an error here:
-     // throw new Error('Asset proof is empty. This is usually required for cNFT operations.');
+  if (assetProof.proof.some(p => typeof p !== 'string' || !p.trim())) { 
+    throw new Error('Invalid asset proof: contains undefined, null, or empty proof elements.');
   }
   
   const { compression, ownership } = cnft.rawHeliusAsset;
-  if (!compression || !compression.data_hash || !compression.creator_hash || !compression.tree) {
-    throw new Error("Essential compression data (data_hash, creator_hash, or tree) is missing.");
+  if (!compression || !compression.data_hash || !compression.creator_hash || typeof compression.tree !== 'string' || !compression.tree.trim()) {
+    throw new Error("Essential compression data (data_hash, creator_hash, or tree) is missing or invalid.");
+  }
+  if (typeof ownership.owner !== 'string' || !ownership.owner.trim()) {
+    throw new Error("Essential ownership data (owner) is missing or invalid.");
+  }
+  if (ownership.delegate && (typeof ownership.delegate !== 'string' || !ownership.delegate.trim())) {
+    throw new Error("Ownership delegate data is invalid (must be non-empty string if present).");
   }
 
-  const treeAccount = new PublicKey(compression.tree);
+
+  const merkleTreeKey = new PublicKey(compression.tree);
   const leafOwner = new PublicKey(ownership.owner); 
   const leafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : leafOwner;
 
   const anchorRemainingAccounts = assetProof.proof.map((p, idx) => {
-    if (!p) throw new Error(`Proof element at index ${idx} is undefined.`); // Should be caught by earlier check
+    if (typeof p !== 'string' || !p.trim()) { 
+        throw new Error(`Proof element at index ${idx} is invalid (not a non-empty string). Received: ${p}`);
+    }
     return { pubkey: new PublicKey(p), isSigner: false, isWritable: false };
   });
 
+  const transferInstructionAccounts = {
+    leafOwner,
+    leafDelegate,
+    newLeafOwner: recipientAddress,
+    merkleTree: merkleTreeKey,
+    logWrapper: LOCAL_SPL_NOOP_PROGRAM_ID,
+    compressionProgram: LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
+    systemProgram: SystemProgram.programId, // Explicitly provide SystemProgram ID
+    anchorRemainingAccounts: anchorRemainingAccounts,
+  };
+  
+  const transferInstructionArgs = {
+    root: new PublicKey(assetProof.root).toBuffer(),
+    dataHash: new PublicKey(compression.data_hash).toBuffer(),
+    creatorHash: new PublicKey(compression.creator_hash).toBuffer(),
+    nonce: new BN(cnft.compression.leafId),
+    index: cnft.compression.leafId,
+  };
+
   const transferInstruction = createBubblegumTransferInstruction(
-    {
-      treeAccount,
-      leafOwner,
-      leafDelegate,
-      newLeafOwner: recipientAddress,
-      merkleTree: treeAccount, 
-      logWrapper: LOCAL_SPL_NOOP_PROGRAM_ID, 
-      compressionProgram: LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, 
-      anchorRemainingAccounts: anchorRemainingAccounts,
-    },
-    {
-      root: new PublicKey(assetProof.root).toBuffer(),
-      dataHash: new PublicKey(compression.data_hash).toBuffer(),
-      creatorHash: new PublicKey(compression.creator_hash).toBuffer(),
-      nonce: new BN(cnft.compression.leafId),
-      index: cnft.compression.leafId,
-    }
+    transferInstructionAccounts,
+    transferInstructionArgs
   );
 
   const instructions: TransactionInstruction[] = [transferInstruction];
@@ -327,49 +332,56 @@ export async function burnCNft(
   if (!assetProof || !assetProof.root || !assetProof.proof) {
     throw new Error('Failed to retrieve valid asset proof from Helius for burn (proof or root missing).');
   }
-  if (assetProof.proof.some(p => !p)) {
-    throw new Error('Invalid asset proof: contains undefined or null proof elements.');
+  if (assetProof.proof.some(p => typeof p !== 'string' || !p.trim())) {
+    throw new Error('Invalid asset proof: contains undefined, null, or empty proof elements.');
   }
-   if (!assetProof.proof.length && cnft.rawHeliusAsset.compression.tree !== SystemProgram.programId.toBase58()) {
-     console.warn("Asset proof is empty for non-system tree during burn.", cnft.rawHeliusAsset.compression.tree);
-     // Potentially throw error here as well, similar to transferCNft
-   }
 
   const { compression, ownership } = cnft.rawHeliusAsset;
 
-  if (!compression || !compression.data_hash || !compression.creator_hash || !compression.tree) {
-    throw new Error("Essential compression data (data_hash, creator_hash, or tree) is missing.");
+  if (!compression || !compression.data_hash || !compression.creator_hash || typeof compression.tree !== 'string' || !compression.tree.trim()) {
+    throw new Error("Essential compression data (data_hash, creator_hash, or tree) is missing or invalid.");
+  }
+  if (typeof ownership.owner !== 'string' || !ownership.owner.trim()) {
+    throw new Error("Essential ownership data (owner) is missing or invalid.");
+  }
+  if (ownership.delegate && (typeof ownership.delegate !== 'string' || !ownership.delegate.trim())) {
+    throw new Error("Ownership delegate data is invalid (must be non-empty string if present).");
   }
   
-  const treeAccount = new PublicKey(compression.tree);
+  const merkleTreeKey = new PublicKey(compression.tree);
   const leafOwner =  new PublicKey(ownership.owner); 
   const leafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : leafOwner;
 
   const anchorRemainingAccounts = assetProof.proof.map((p, idx) => {
-    if (!p) throw new Error(`Proof element at index ${idx} is undefined.`); // Should be caught by earlier check
+     if (typeof p !== 'string' || !p.trim()) {
+        throw new Error(`Proof element at index ${idx} is invalid (not a non-empty string). Received: ${p}`);
+    }
     return { pubkey: new PublicKey(p), isSigner: false, isWritable: false };
   });
 
+  const burnInstructionAccounts = {
+    leafOwner,
+    leafDelegate,
+    merkleTree: merkleTreeKey,
+    logWrapper: LOCAL_SPL_NOOP_PROGRAM_ID,
+    compressionProgram: LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
+    systemProgram: SystemProgram.programId, // Explicitly provide SystemProgram ID
+    anchorRemainingAccounts: anchorRemainingAccounts,
+  };
+
+  const burnInstructionArgs = {
+    root: new PublicKey(assetProof.root).toBuffer(),
+    dataHash: new PublicKey(compression.data_hash).toBuffer(),
+    creatorHash: new PublicKey(compression.creator_hash).toBuffer(),
+    nonce: new BN(cnft.compression.leafId),
+    index: cnft.compression.leafId,
+  };
+  
   const burnInstruction = createBubblegumBurnInstruction(
-    {
-      treeAccount,
-      leafOwner,
-      leafDelegate,
-      merkleTree: treeAccount,
-      logWrapper: LOCAL_SPL_NOOP_PROGRAM_ID, 
-      compressionProgram: LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, 
-      anchorRemainingAccounts: anchorRemainingAccounts,
-    },
-    {
-      root: new PublicKey(assetProof.root).toBuffer(),
-      dataHash: new PublicKey(compression.data_hash).toBuffer(),
-      creatorHash: new PublicKey(compression.creator_hash).toBuffer(),
-      nonce: new BN(cnft.compression.leafId),
-      index: cnft.compression.leafId,
-    }
+    burnInstructionAccounts,
+    burnInstructionArgs
   );
 
   const instructions: TransactionInstruction[] = [burnInstruction];
   return sendTransaction(instructions, connection, wallet);
 }
-
