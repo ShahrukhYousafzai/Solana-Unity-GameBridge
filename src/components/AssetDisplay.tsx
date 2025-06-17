@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { Asset, Nft, CNft, SplToken } from "@/types/solana";
@@ -7,14 +8,16 @@ import { Button } from "@/components/ui/button";
 import { ExternalLink, Copy, Send, Trash2 } from "lucide-react";
 import { getAddressExplorerUrl } from "@/utils/explorer";
 import { useToast } from "@/hooks/use-toast";
+import type { SupportedSolanaNetwork } from "@/config"; // Import the network type
 
 interface AssetDisplayProps {
   asset: Asset;
   onTransferClick: () => void;
   onBurnClick: () => void;
+  currentNetwork: SupportedSolanaNetwork; // Add currentNetwork prop
 }
 
-export const AssetDisplay: React.FC<AssetDisplayProps> = ({ asset, onTransferClick, onBurnClick }) => {
+export const AssetDisplay: React.FC<AssetDisplayProps> = ({ asset, onTransferClick, onBurnClick, currentNetwork }) => {
   const { toast } = useToast();
 
   const copyToClipboard = (text: string, label: string) => {
@@ -36,7 +39,7 @@ export const AssetDisplay: React.FC<AssetDisplayProps> = ({ asset, onTransferCli
             <CardDescription className="text-base text-muted-foreground">{asset.symbol || assetTypeLabel}</CardDescription>
           </div>
           <a
-            href={getAddressExplorerUrl(asset.id)}
+            href={getAddressExplorerUrl(asset.id, currentNetwork)} // Use currentNetwork
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-primary hover:underline flex items-center gap-1"
@@ -83,6 +86,22 @@ export const AssetDisplay: React.FC<AssetDisplayProps> = ({ asset, onTransferCli
               <div>
                 <h4 className="text-sm font-semibold text-muted-foreground">Collection</h4>
                 <p className="text-sm truncate" title={(asset as Nft | CNft).collection!.name}>{(asset as Nft | CNft).collection!.name}</p>
+                 {(asset as Nft | CNft).collection?.id && (
+                   <div className="flex items-center gap-1 text-xs">
+                    <a
+                        href={getAddressExplorerUrl((asset as Nft | CNft).collection!.id, currentNetwork)} // Use currentNetwork for collection link
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline flex items-center gap-1 truncate"
+                        title={`View collection ${(asset as Nft | CNft).collection!.id} on explorer`}
+                    >
+                        {(asset as Nft | CNft).collection!.id} <ExternalLink className="h-3 w-3 shrink-0" />
+                    </a>
+                    <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => copyToClipboard((asset as Nft | CNft).collection!.id, "Collection ID")} aria-label="Copy Collection ID">
+                        <Copy className="h-3 w-3" />
+                    </Button>
+                   </div>
+                )}
               </div>
             )}
 
@@ -100,7 +119,14 @@ export const AssetDisplay: React.FC<AssetDisplayProps> = ({ asset, onTransferCli
                     <ul className="text-xs space-y-0.5">
                     {asset.rawHeliusAsset.creators.slice(0,3).map(c => (
                         <li key={c.address} className="truncate font-mono" title={c.address}>
-                            {c.address} ({c.share}%) {c.verified ? "✓" : ""}
+                           <a
+                             href={getAddressExplorerUrl(c.address, currentNetwork)} // Use currentNetwork for creator link
+                             target="_blank"
+                             rel="noopener noreferrer"
+                             className="text-primary hover:underline"
+                            >
+                            {c.address}
+                            </a> ({c.share}%) {c.verified ? "✓" : ""}
                         </li>
                     ))}
                     {asset.rawHeliusAsset.creators.length > 3 && <li>...and more</li>}

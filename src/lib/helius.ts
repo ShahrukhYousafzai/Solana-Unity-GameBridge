@@ -1,9 +1,9 @@
-import { HELIUS_RPC_URL } from "@/config";
+
 import type { HeliusAsset, Nft, CNft, SplToken, Asset } from "@/types/solana";
 import { PublicKey } from "@solana/web3.js";
 
-const getAssetsByOwner = async (ownerAddress: string): Promise<HeliusAsset[]> => {
-  const response = await fetch(HELIUS_RPC_URL, {
+const getAssetsByOwner = async (ownerAddress: string, rpcUrl: string): Promise<HeliusAsset[]> => {
+  const response = await fetch(rpcUrl, { // Use dynamic rpcUrl
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -14,7 +14,7 @@ const getAssetsByOwner = async (ownerAddress: string): Promise<HeliusAsset[]> =>
       method: "getAssetsByOwner",
       params: {
         ownerAddress,
-        page: 1, // TODO: Implement pagination if needed
+        page: 1, 
         limit: 1000,
         displayOptions: {
           showFungible: true, 
@@ -37,24 +37,21 @@ const normalizeHeliusAsset = (heliusAsset: HeliusAsset): Asset | null => {
   const name = heliusAsset.content?.metadata?.name || "Unknown Asset";
   const symbol = heliusAsset.content?.metadata?.symbol || "";
   let imageUrl = heliusAsset.content?.links?.image || heliusAsset.content?.files?.find(f => f.uri && f.mime?.startsWith("image/"))?.uri;
-  // Fallback to cdn_uri if available
+
   if (!imageUrl) {
     imageUrl = heliusAsset.content?.files?.find(f => f.cdn_uri && f.mime?.startsWith("image/"))?.cdn_uri;
   }
 
-
   const collectionData = heliusAsset.grouping?.find(g => g.group_key === "collection");
   const collection = collectionData ? { name: collectionData.collection_metadata?.name || collectionData.group_value, id: collectionData.group_value } : undefined;
-  // A simple check for verified collection (if any creator in the collection group is verified)
-  // This is a basic assumption; more robust verification might be needed.
+
   const isVerifiedCollection = collectionData?.verified === true || heliusAsset.creators?.some(c => c.verified && collectionData?.group_value);
 
 
   if (heliusAsset.interface === "V1_NFT" || heliusAsset.interface === "ProgrammableNFT" || heliusAsset.interface === "IdentityNFT" || heliusAsset.interface === "V1_PRINT") {
     if (heliusAsset.compression?.compressed) {
-      // cNFT
       return {
-        id: heliusAsset.id, // cNFTs use their specific ID, not mint typically
+        id: heliusAsset.id, 
         name,
         symbol,
         imageUrl,
@@ -71,9 +68,8 @@ const normalizeHeliusAsset = (heliusAsset: HeliusAsset): Asset | null => {
         rawHeliusAsset: heliusAsset,
       } as CNft;
     } else {
-      // Standard NFT
       return {
-        id: heliusAsset.id, // Mint address
+        id: heliusAsset.id,
         name,
         symbol,
         imageUrl,
@@ -89,38 +85,33 @@ const normalizeHeliusAsset = (heliusAsset: HeliusAsset): Asset | null => {
   }
 
   if (heliusAsset.interface === "FungibleAsset" || heliusAsset.interface === "FungibleToken") {
-    if (!heliusAsset.token_info) return null; // Should not happen for fungibles
+    if (!heliusAsset.token_info) return null; 
     
-    // Helius balance is already adjusted for decimals.
-    // For rawBalance, we need to parse it from a string if available, or calculate from float.
-    // It's safer to work with BigInt for raw balances. Helius typically provides 'balance' as a number (adjusted)
-    // and sometimes raw balance as string. If not, we calculate.
     const rawBalanceBigInt = BigInt(Math.round(heliusAsset.token_info.balance * (10 ** heliusAsset.token_info.decimals)));
 
     return {
-      id: heliusAsset.id, // Mint address
+      id: heliusAsset.id, 
       name,
       symbol: heliusAsset.token_info.symbol || symbol,
-      imageUrl, // Tokens can have images via token-list or metadata
+      imageUrl, 
       type: "token",
       uri: heliusAsset.content?.json_uri,
       decimals: heliusAsset.token_info.decimals,
-      balance: heliusAsset.token_info.balance, // Already UI formatted by Helius
+      balance: heliusAsset.token_info.balance, 
       rawBalance: rawBalanceBigInt,
       tokenAddress: heliusAsset.ownership.token_account || heliusAsset.spl_token_info?.token_account,
       rawHeliusAsset: heliusAsset,
     } as SplToken;
   }
   
-  // Fallback for other types like "Inscription" or if it's a token from spl_token_info
-   if (heliusAsset.spl_token_info && heliusAsset.id) { // e.g. older token types
+   if (heliusAsset.spl_token_info && heliusAsset.id) { 
     const decimals = heliusAsset.spl_token_info.decimals;
     const rawBalance = BigInt(heliusAsset.spl_token_info.balance);
     const balance = Number(rawBalance) / (10 ** decimals);
     return {
-      id: heliusAsset.id, // Mint address
-      name: name !== "Unknown Asset" ? name : heliusAsset.id, // Use mint if no name
-      symbol: symbol || heliusAsset.id.substring(0,4), // Use symbol or part of mint
+      id: heliusAsset.id, 
+      name: name !== "Unknown Asset" ? name : heliusAsset.id, 
+      symbol: symbol || heliusAsset.id.substring(0,4), 
       imageUrl,
       type: "token",
       uri: heliusAsset.content?.json_uri,
@@ -132,29 +123,29 @@ const normalizeHeliusAsset = (heliusAsset: HeliusAsset): Asset | null => {
     } as SplToken;
   }
 
-
-  return null; // Skip unknown or unsupported asset types
+  return null; 
 };
 
 
 export const fetchAssetsForOwner = async (
-  ownerAddress: string
+  ownerAddress: string,
+  rpcUrl: string // Add rpcUrl parameter
 ): Promise<{ nfts: Nft[]; cnfts: CNft[]; tokens: SplToken[] }> => {
   try {
-    new PublicKey(ownerAddress); // Validate address
+    new PublicKey(ownerAddress); 
   } catch (error) {
     console.error("Invalid owner address:", ownerAddress);
     return { nfts: [], cnfts: [], tokens: [] };
   }
 
-  const heliusAssets = await getAssetsByOwner(ownerAddress);
+  const heliusAssets = await getAssetsByOwner(ownerAddress, rpcUrl); // Pass rpcUrl
   
   const nfts: Nft[] = [];
   const cnfts: CNft[] = [];
   const tokens: SplToken[] = [];
 
   for (const heliusAsset of heliusAssets) {
-    if (heliusAsset.burnt) continue; // Skip burnt assets
+    if (heliusAsset.burnt) continue; 
 
     const asset = normalizeHeliusAsset(heliusAsset);
     if (asset) {
@@ -163,7 +154,6 @@ export const fetchAssetsForOwner = async (
       } else if (asset.type === "cnft") {
         cnfts.push(asset);
       } else if (asset.type === "token") {
-        // Filter out tokens with zero balance
         if (asset.balance > 0) {
            tokens.push(asset);
         }

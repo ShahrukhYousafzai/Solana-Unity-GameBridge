@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { FC, ReactNode } from "react";
@@ -6,33 +7,33 @@ import {
   ConnectionProvider,
   WalletProvider,
 } from "@solana/wallet-adapter-react";
-import { WalletAdapterNetwork } from "@solana/wallet-adapter-base";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import { PhantomWalletAdapter } from "@solana/wallet-adapter-phantom";
 import { SolflareWalletAdapter } from "@solana/wallet-adapter-solflare";
 import { BackpackWalletAdapter } from "@solana/wallet-adapter-backpack";
-import { SOLANA_CLUSTER, HELIUS_RPC_URL } from "@/config";
-
-// The styles.css import was removed from here
+import { useNetwork } from "./NetworkContext"; // Import useNetwork
 
 export const WalletContextProvider: FC<{ children: ReactNode }> = ({
   children,
 }) => {
-  const network = SOLANA_CLUSTER as WalletAdapterNetwork; // mainnet-beta, testnet, devnet
-  const endpoint = useMemo(() => HELIUS_RPC_URL, []);
+  const { currentNetwork, rpcUrl } = useNetwork(); // Use network and rpcUrl from context
 
   const wallets = useMemo(
     () => [
       new PhantomWalletAdapter(),
-      new SolflareWalletAdapter({ network }),
+      new SolflareWalletAdapter({ network: currentNetwork }), // Use currentNetwork
       new BackpackWalletAdapter(),
     ],
-    [network]
+    [currentNetwork] // Re-initialize wallets if network changes
   );
 
+  // Key the providers by rpcUrl and currentNetwork to force re-render when they change
+  // This ensures ConnectionProvider and WalletProvider re-initialize with new settings.
+  const providerKey = `${rpcUrl}-${currentNetwork}`;
+
   return (
-    <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider wallets={wallets} autoConnect>
+    <ConnectionProvider endpoint={rpcUrl} key={`${providerKey}-conn`}>
+      <WalletProvider wallets={wallets} autoConnect key={`${providerKey}-wallet`}>
         <WalletModalProvider>{children}</WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>

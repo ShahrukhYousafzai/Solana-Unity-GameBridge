@@ -4,10 +4,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import dynamic from "next/dynamic"; // Import dynamic
+import dynamic from "next/dynamic";
 import { fetchAssetsForOwner } from "@/lib/helius";
 import type { Asset, Nft, CNft, SplToken } from "@/types/solana";
-// import { ConnectWalletButton } from "@/components/ConnectWalletButton"; // Remove static import
 import { AssetDropdown } from "@/components/AssetDropdown";
 import { AssetCard } from "@/components/AssetCard";
 import { AssetDisplay } from "@/components/AssetDisplay";
@@ -18,11 +17,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { getTransactionExplorerUrl } from "@/utils/explorer";
+import { getTransactionExplorerUrl, getAddressExplorerUrl } from "@/utils/explorer"; // Added getAddressExplorerUrl
 import { transferNft, transferSplToken, burnNft, burnSplToken, transferCNft, burnCNft } from "@/lib/solana/transactions";
 import { RefreshCw, Package, PackageSearch, CoinsIcon } from "lucide-react";
+import { useNetwork } from "@/contexts/NetworkContext"; // Import useNetwork
+import { NetworkSwitcher } from "@/components/NetworkSwitcher"; // Import NetworkSwitcher
 
-// Dynamically import ConnectWalletButton
 const ConnectWalletButton = dynamic(
   () => import("@/components/ConnectWalletButton").then((mod) => mod.ConnectWalletButton),
   { 
@@ -36,6 +36,7 @@ export default function HomePage() {
   const wallet = useWallet();
   const { publicKey, sendTransaction, connected } = wallet;
   const { toast } = useToast();
+  const { currentNetwork, rpcUrl } = useNetwork(); // Get network and rpcUrl from context
 
   const [nfts, setNfts] = useState<Nft[]>([]);
   const [cnfts, setCnfts] = useState<CNft[]>([]);
@@ -49,7 +50,7 @@ export default function HomePage() {
   const selectedAsset = useMemo(() => allFetchedAssets.find(a => a.id === selectedAssetId) || null, [selectedAssetId, allFetchedAssets]);
 
   const loadAssets = useCallback(async () => {
-    if (!publicKey) {
+    if (!publicKey || !rpcUrl) { // Ensure rpcUrl is available
       setNfts([]);
       setCnfts([]);
       setTokens([]);
@@ -59,11 +60,11 @@ export default function HomePage() {
     setIsLoadingAssets(true);
     setSelectedAssetId(null); 
     try {
-      const { nfts, cnfts, tokens } = await fetchAssetsForOwner(publicKey.toBase58());
-      setNfts(nfts);
-      setCnfts(cnfts);
-      setTokens(tokens);
-      toast({ title: "Assets Loaded", description: `Found ${nfts.length} NFTs, ${cnfts.length} cNFTs, ${tokens.length} Tokens.` });
+      const { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens } = await fetchAssetsForOwner(publicKey.toBase58(), rpcUrl); // Pass rpcUrl
+      setNfts(fetchedNfts);
+      setCnfts(fetchedCnfts);
+      setTokens(fetchedTokens);
+      toast({ title: "Assets Loaded", description: `Found ${fetchedNfts.length} NFTs, ${fetchedCnfts.length} cNFTs, ${fetchedTokens.length} Tokens on ${currentNetwork}.` });
     } catch (error: any) {
       console.error("Failed to load assets:", error);
       toast({ title: "Error Loading Assets", description: error.message, variant: "destructive" });
@@ -71,19 +72,18 @@ export default function HomePage() {
     } finally {
       setIsLoadingAssets(false);
     }
-  }, [publicKey, toast]);
+  }, [publicKey, toast, rpcUrl, currentNetwork]); // Add rpcUrl and currentNetwork to dependencies
 
   useEffect(() => {
     if (connected && publicKey) {
       loadAssets();
     } else {
-      // Clear assets if wallet disconnects
       setNfts([]);
       setCnfts([]);
       setTokens([]);
       setSelectedAssetId(null);
     }
-  }, [connected, publicKey, loadAssets]);
+  }, [connected, publicKey, loadAssets, currentNetwork]); // Add currentNetwork to trigger reload on network change
 
   const handleConfirmTransfer = useCallback(async (recipientAddress: string, amount?: number) => {
     if (!selectedAsset || !publicKey || !sendTransaction) {
@@ -110,7 +110,7 @@ export default function HomePage() {
         toast({
           title: "Transfer Initiated",
           description: `Transaction signature: ${signature}`,
-          action: <a href={getTransactionExplorerUrl(signature)} target="_blank" rel="noopener noreferrer" className="text-primary underline">View on Explorer</a>,
+          action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank" rel="noopener noreferrer" className="text-primary underline">View on Explorer</a>,
         });
         setIsTransferModalOpen(false);
         loadAssets(); 
@@ -119,7 +119,7 @@ export default function HomePage() {
       console.error("Transfer failed:", error);
       toast({ title: "Transfer Failed", description: error.message, variant: "destructive" });
     }
-  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets]);
+  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets, currentNetwork]); // Added currentNetwork
 
   const handleConfirmBurn = useCallback(async (amount?: number) => {
     if (!selectedAsset || !publicKey || !sendTransaction) {
@@ -145,7 +145,7 @@ export default function HomePage() {
         toast({
           title: "Burn Initiated",
           description: `Transaction signature: ${signature}`,
-          action: <a href={getTransactionExplorerUrl(signature)} target="_blank" rel="noopener noreferrer" className="text-primary underline">View on Explorer</a>,
+          action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank" rel="noopener noreferrer" className="text-primary underline">View on Explorer</a>,
         });
         setIsBurnModalOpen(false);
         loadAssets(); 
@@ -154,9 +154,8 @@ export default function HomePage() {
       console.error("Burn failed:", error);
       toast({ title: "Burn Failed", description: error.message, variant: "destructive" });
     }
-  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets]);
+  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets, currentNetwork]); // Added currentNetwork
   
-  // Expose global functions
   useEffect(() => {
     if (typeof window !== 'undefined') {
       (window as any).transferSelectedAsset = async (recipientAddressString: string, amount?: number) => {
@@ -189,7 +188,7 @@ export default function HomePage() {
         delete (window as any).burnSelectedAsset;
       }
     };
-  }, [selectedAsset, connection, wallet, toast, handleConfirmTransfer, handleConfirmBurn]);
+  }, [selectedAsset, handleConfirmTransfer, handleConfirmBurn]);
 
   const handleSelectAsset = (assetId: string | null) => {
     setSelectedAssetId(assetId);
@@ -197,7 +196,7 @@ export default function HomePage() {
 
   const AssetList = ({ assets }: { assets: Asset[] }) => (
     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 p-1">
-      {assets.length === 0 && !isLoadingAssets && <p className="col-span-full text-center text-muted-foreground py-8">No assets of this type found.</p>}
+      {assets.length === 0 && !isLoadingAssets && <p className="col-span-full text-center text-muted-foreground py-8">No assets of this type found on {currentNetwork}.</p>}
       {isLoadingAssets ? 
         Array.from({ length: 8 }).map((_, i) => (
           <Card key={i}>
@@ -218,11 +217,14 @@ export default function HomePage() {
     <div className="min-h-screen flex flex-col bg-background text-foreground">
       <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container flex h-20 items-center justify-between px-4 md:px-6">
-          <div className="flex items-center gap-2">
-            <svg width="32" height="32" viewBox="0 0 100 100" fill="hsl(var(--primary))" xmlns="http://www.w3.org/2000/svg">
-              <path d="M50 0L61.226 23.407L87.364 26.795L70.957 44.09L73.607 70.039L50 58.36L26.393 70.039L29.043 44.09L12.636 26.795L38.774 23.407L50 0ZM50 28.778L43.111 54.444H71.111L64.222 28.778H50ZM28.889 60L35.778 85.667L50 73.333L64.222 85.667L71.111 60H28.889Z"/>
-            </svg>
-            <h1 className="text-2xl font-bold font-headline text-primary">SolBlaze</h1>
+          <div className="flex items-center gap-4"> {/* Increased gap for NetworkSwitcher */}
+            <div className="flex items-center gap-2">
+              <svg width="32" height="32" viewBox="0 0 100 100" fill="hsl(var(--primary))" xmlns="http://www.w3.org/2000/svg">
+                <path d="M50 0L61.226 23.407L87.364 26.795L70.957 44.09L73.607 70.039L50 58.36L26.393 70.039L29.043 44.09L12.636 26.795L38.774 23.407L50 0ZM50 28.778L43.111 54.444H71.111L64.222 28.778H50ZM28.889 60L35.778 85.667L50 73.333L64.222 85.667L71.111 60H28.889Z"/>
+              </svg>
+              <h1 className="text-2xl font-bold font-headline text-primary">SolBlaze</h1>
+            </div>
+            <NetworkSwitcher /> 
           </div>
           <ConnectWalletButton />
         </div>
@@ -235,7 +237,7 @@ export default function HomePage() {
               <CardTitle className="text-3xl font-headline">Welcome to SolBlaze Dashboard</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-lg text-muted-foreground mb-6">Connect your Solana wallet to manage your NFTs, cNFTs, and SPL tokens.</p>
+              <p className="text-lg text-muted-foreground mb-6">Connect your Solana wallet to manage your assets on the {currentNetwork} network.</p>
               <ConnectWalletButton />
             </CardContent>
           </Card>
@@ -243,7 +245,7 @@ export default function HomePage() {
           <>
             <section className="space-y-4">
               <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-                <h2 className="text-2xl font-semibold font-headline">Select Asset</h2>
+                <h2 className="text-2xl font-semibold font-headline">Select Asset ({currentNetwork})</h2>
                  <Button variant="outline" onClick={loadAssets} disabled={isLoadingAssets}>
                   <RefreshCw className={`mr-2 h-4 w-4 ${isLoadingAssets ? 'animate-spin' : ''}`} />
                   Refresh Assets
@@ -266,6 +268,7 @@ export default function HomePage() {
                   asset={selectedAsset}
                   onTransferClick={() => setIsTransferModalOpen(true)}
                   onBurnClick={() => setIsBurnModalOpen(true)}
+                  currentNetwork={currentNetwork} // Pass currentNetwork
                 />
               </section>
             )}
@@ -273,7 +276,7 @@ export default function HomePage() {
             <section>
               <Card className="shadow-lg">
                 <CardHeader>
-                  <CardTitle className="text-2xl font-semibold font-headline">My Wallet Assets</CardTitle>
+                  <CardTitle className="text-2xl font-semibold font-headline">My Wallet Assets ({currentNetwork})</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <Tabs defaultValue="nfts" className="w-full">
@@ -294,7 +297,7 @@ export default function HomePage() {
       </main>
 
       <footer className="py-6 text-center text-sm text-muted-foreground border-t">
-        <p>&copy; {new Date().getFullYear()} SolBlaze. All rights reserved.</p>
+        <p>&copy; {new Date().getFullYear()} SolBlaze. All rights reserved. Network: {currentNetwork}</p>
         <p className="mt-1">Powered by Helius and Solana.</p>
       </footer>
 
@@ -317,5 +320,3 @@ export default function HomePage() {
     </div>
   );
 }
-
-  
