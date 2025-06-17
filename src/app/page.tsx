@@ -1,11 +1,13 @@
+
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
+import dynamic from "next/dynamic"; // Import dynamic
 import { fetchAssetsForOwner } from "@/lib/helius";
 import type { Asset, Nft, CNft, SplToken } from "@/types/solana";
-import { ConnectWalletButton } from "@/components/ConnectWalletButton";
+// import { ConnectWalletButton } from "@/components/ConnectWalletButton"; // Remove static import
 import { AssetDropdown } from "@/components/AssetDropdown";
 import { AssetCard } from "@/components/AssetCard";
 import { AssetDisplay } from "@/components/AssetDisplay";
@@ -18,7 +20,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { getTransactionExplorerUrl } from "@/utils/explorer";
 import { transferNft, transferSplToken, burnNft, burnSplToken, transferCNft, burnCNft } from "@/lib/solana/transactions";
-import { RefreshCw, Package, PackageSearch, CoinsIcon } from "lucide-react"; // Using Package variants for NFTs
+import { RefreshCw, Package, PackageSearch, CoinsIcon } from "lucide-react";
+
+// Dynamically import ConnectWalletButton
+const ConnectWalletButton = dynamic(
+  () => import("@/components/ConnectWalletButton").then((mod) => mod.ConnectWalletButton),
+  { 
+    ssr: false,
+    loading: () => <Skeleton className="h-10 w-32 rounded-md" /> 
+  }
+);
 
 export default function HomePage() {
   const { connection } = useConnection();
@@ -107,13 +118,13 @@ export default function HomePage() {
         delete (window as any).burnSelectedAsset;
       }
     };
-  }, [selectedAsset, connection, wallet, toast]); // Add other necessary dependencies if actions depend on more state
+  }, [selectedAsset, connection, wallet, toast, handleConfirmTransfer, handleConfirmBurn]); // Added handleConfirmTransfer and handleConfirmBurn to dependencies
 
   const handleSelectAsset = (assetId: string | null) => {
     setSelectedAssetId(assetId);
   };
 
-  const handleConfirmTransfer = async (recipientAddress: string, amount?: number) => {
+  const handleConfirmTransfer = useCallback(async (recipientAddress: string, amount?: number) => {
     if (!selectedAsset || !publicKey || !sendTransaction) {
       toast({ title: "Error", description: "Wallet not connected or no asset selected.", variant: "destructive" });
       return;
@@ -141,15 +152,15 @@ export default function HomePage() {
           action: <a href={getTransactionExplorerUrl(signature)} target="_blank" rel="noopener noreferrer" className="text-primary underline">View on Explorer</a>,
         });
         setIsTransferModalOpen(false);
-        loadAssets(); // Refresh assets after successful transfer
+        loadAssets(); 
       }
     } catch (error: any) {
       console.error("Transfer failed:", error);
       toast({ title: "Transfer Failed", description: error.message, variant: "destructive" });
     }
-  };
+  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets]);
 
-  const handleConfirmBurn = async (amount?: number) => {
+  const handleConfirmBurn = useCallback(async (amount?: number) => {
     if (!selectedAsset || !publicKey || !sendTransaction) {
       toast({ title: "Error", description: "Wallet not connected or no asset selected.", variant: "destructive" });
       return;
@@ -176,13 +187,13 @@ export default function HomePage() {
           action: <a href={getTransactionExplorerUrl(signature)} target="_blank" rel="noopener noreferrer" className="text-primary underline">View on Explorer</a>,
         });
         setIsBurnModalOpen(false);
-        loadAssets(); // Refresh assets
+        loadAssets(); 
       }
     } catch (error: any) {
       console.error("Burn failed:", error);
       toast({ title: "Burn Failed", description: error.message, variant: "destructive" });
     }
-  };
+  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets]);
 
   const AssetList = ({ assets }: { assets: Asset[] }) => (
     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 p-1">
@@ -306,3 +317,5 @@ export default function HomePage() {
     </div>
   );
 }
+
+  
