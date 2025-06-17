@@ -24,9 +24,14 @@ import {
   createBurnInstruction as createBubblegumBurnInstruction,
   createTransferInstruction as createBubblegumTransferInstruction,
 } from "@metaplex-foundation/mpl-bubblegum";
-import {SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, SPL_NOOP_PROGRAM_ID} from "@solana/spl-account-compression";
+// Removed import from "@solana/spl-account-compression"
 import { getHeliusAssetProof } from "@/lib/helius";
 import BN from "bn.js";
+
+// Define these constants directly if import is problematic
+const LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID = new PublicKey("cmtDvXumGCrqC1Age74AVPhSRVXJM2Bzp_1RDHnVidc");
+const LOCAL_SPL_NOOP_PROGRAM_ID = new PublicKey("noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV");
+
 
 // Helper to send transaction, now using VersionedTransaction
 async function sendTransaction(
@@ -225,6 +230,9 @@ export async function transferCNft(
   if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing.");
 
   const assetProof = await getHeliusAssetProof(cnft.id, rpcUrl);
+  if (!assetProof || !assetProof.root || !assetProof.proof) {
+    throw new Error('Failed to retrieve valid asset proof from Helius for transfer.');
+  }
   
   const { compression, ownership } = cnft.rawHeliusAsset;
   if (!compression.data_hash || !compression.creator_hash || !compression.tree) {
@@ -242,8 +250,8 @@ export async function transferCNft(
       leafDelegate,
       newLeafOwner: recipientAddress,
       merkleTree: treeAccount, 
-      logWrapper: SPL_NOOP_PROGRAM_ID,
-      compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
+      logWrapper: LOCAL_SPL_NOOP_PROGRAM_ID, // Use local constant
+      compressionProgram: LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, // Use local constant
       anchorRemainingAccounts: assetProof.proof.map(p => ({ pubkey: new PublicKey(p), isSigner: false, isWritable: false })),
     },
     {
@@ -271,6 +279,9 @@ export async function burnCNft(
   if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing.");
 
   const assetProof = await getHeliusAssetProof(cnft.id, rpcUrl);
+  if (!assetProof || !assetProof.root || !assetProof.proof) {
+    throw new Error('Failed to retrieve valid asset proof from Helius for burn.');
+  }
   const { compression, ownership } = cnft.rawHeliusAsset;
 
   if (!compression.data_hash || !compression.creator_hash || !compression.tree) {
@@ -288,8 +299,8 @@ export async function burnCNft(
       leafOwner,
       leafDelegate,
       merkleTree: treeAccount,
-      logWrapper: SPL_NOOP_PROGRAM_ID,
-      compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
+      logWrapper: LOCAL_SPL_NOOP_PROGRAM_ID, // Use local constant
+      compressionProgram: LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, // Use local constant
       anchorRemainingAccounts: assetProof.proof.map(p => ({ pubkey: new PublicKey(p), isSigner: false, isWritable: false })),
     },
     {
@@ -304,3 +315,4 @@ export async function burnCNft(
   const instructions: TransactionInstruction[] = [burnInstruction];
   return sendTransaction(instructions, connection, wallet);
 }
+
