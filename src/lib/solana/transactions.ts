@@ -44,6 +44,11 @@ async function sendTransaction(
 
   const latestBlockhash = await connection.getLatestBlockhash();
   
+  // Safeguard against potential undefined publicKey, as suggested by user
+  if (!wallet.publicKey) {
+    throw new Error("Wallet public key is unexpectedly undefined before transaction message creation.");
+  }
+
   const messageV0 = new TransactionMessage({
     payerKey: wallet.publicKey,
     recentBlockhash: latestBlockhash.blockhash,
@@ -314,4 +319,3 @@ export async function burnCNft(
   const instructions: TransactionInstruction[] = [burnInstruction];
   return sendTransaction(instructions, connection, wallet);
 }
-
