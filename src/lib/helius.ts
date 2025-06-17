@@ -46,7 +46,7 @@ const getAssetsByOwner = async (ownerAddress: string, rpcUrl: string): Promise<H
         limit: 1000,
         displayOptions: {
           showFungible: true, 
-          showNativeBalance: false,
+          // showNativeBalance: false, // Removed as it's an unknown field
           showUnverifiedCollections: true,
           showCollectionMetadata: true,
         }
