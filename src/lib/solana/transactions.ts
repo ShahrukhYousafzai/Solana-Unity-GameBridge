@@ -2,12 +2,11 @@
 import {
   Connection,
   PublicKey,
-  Transaction,
   SystemProgram,
-  sendAndConfirmTransaction,
   LAMPORTS_PER_SOL,
   VersionedTransaction,
   TransactionMessage,
+  type TransactionInstruction, // Import TransactionInstruction type
 } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
@@ -19,7 +18,7 @@ import {
   createAssociatedTokenAccountInstruction,
 } from "@solana/spl-token";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
-import type { Asset, Nft, CNft, SplToken } from "@/types/solana";
+import type { Nft, CNft, SplToken } from "@/types/solana";
 import { 
   PROGRAM_ID as BUBBLEGUM_PROGRAM_ID, 
   createBurnInstruction as createBubblegumBurnInstruction,
@@ -29,25 +28,43 @@ import {SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, SPL_NOOP_PROGRAM_ID} from "@solana/s
 import { getHeliusAssetProof } from "@/lib/helius";
 import BN from "bn.js";
 
-// Helper to send transaction
+// Helper to send transaction, now using VersionedTransaction
 async function sendTransaction(
-  transaction: Transaction,
+  instructions: TransactionInstruction[], // Accepts an array of instructions
   connection: Connection,
   wallet: WalletContextState
 ): Promise<string> {
   if (!wallet.publicKey || !wallet.signTransaction) {
     throw new Error("Wallet not connected or doesn't support signing.");
   }
-  transaction.feePayer = wallet.publicKey;
-  transaction.recentBlockhash = (
-    await connection.getLatestBlockhash()
-  ).blockhash;
+
+  const latestBlockhash = await connection.getLatestBlockhash();
   
-  const signedTransaction = await wallet.signTransaction(transaction);
-  const signature = await connection.sendRawTransaction(
-    signedTransaction.serialize()
-  );
-  await connection.confirmTransaction(signature, "confirmed");
+  const messageV0 = new TransactionMessage({
+    payerKey: wallet.publicKey,
+    recentBlockhash: latestBlockhash.blockhash,
+    instructions: instructions,
+  }).compileToV0Message();
+
+  const versionedTransaction = new VersionedTransaction(messageV0);
+  
+  const signedTransaction = await wallet.signTransaction(versionedTransaction);
+  
+  const signature = await connection.sendTransaction(signedTransaction, {
+    maxRetries: 5,
+  });
+  
+  const confirmation = await connection.confirmTransaction({
+    signature,
+    blockhash: latestBlockhash.blockhash,
+    lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
+  }, "confirmed");
+
+  if (confirmation.value.err) {
+    console.error("Transaction confirmation error:", confirmation.value.err);
+    throw new Error(`Transaction failed to confirm: ${JSON.stringify(confirmation.value.err)}`);
+  }
+
   return signature;
 }
 
@@ -63,14 +80,13 @@ export async function transferNft(
 
   const mintPublicKey = new PublicKey(nft.id);
   const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, wallet.publicKey);
-  
   const recipientAta = getAssociatedTokenAddressSync(mintPublicKey, recipientAddress);
-  const transaction = new Transaction();
+  
+  const instructions: TransactionInstruction[] = [];
 
-  // Check if recipient ATA exists, if not, create it
   const recipientAtaInfo = await connection.getAccountInfo(recipientAta);
   if (!recipientAtaInfo) {
-    transaction.add(
+    instructions.push(
       createAssociatedTokenAccountInstruction(
         wallet.publicKey, // Payer
         recipientAta,    // ATA
@@ -80,7 +96,7 @@ export async function transferNft(
     );
   }
   
-  transaction.add(
+  instructions.push(
     createSplTransferInstruction(
       sourceAta,
       recipientAta,
@@ -89,7 +105,7 @@ export async function transferNft(
     )
   );
 
-  return sendTransaction(transaction, connection, wallet);
+  return sendTransaction(instructions, connection, wallet);
 }
 
 // Transfer SPL Token
@@ -107,12 +123,12 @@ export async function transferSplToken(
 
   const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, wallet.publicKey);
   const recipientAta = getAssociatedTokenAddressSync(mintPublicKey, recipientAddress);
-  const transaction = new Transaction();
+  
+  const instructions: TransactionInstruction[] = [];
 
-  // Check if recipient ATA exists
   const recipientAtaInfo = await connection.getAccountInfo(recipientAta);
   if (!recipientAtaInfo) {
-    transaction.add(
+    instructions.push(
       createAssociatedTokenAccountInstruction(
         wallet.publicKey,
         recipientAta,
@@ -122,7 +138,7 @@ export async function transferSplToken(
     );
   }
 
-  transaction.add(
+  instructions.push(
     createSplTransferInstruction(
       sourceAta,
       recipientAta,
@@ -131,7 +147,7 @@ export async function transferSplToken(
     )
   );
   
-  return sendTransaction(transaction, connection, wallet);
+  return sendTransaction(instructions, connection, wallet);
 }
 
 // Burn Standard NFT
@@ -145,7 +161,7 @@ export async function burnNft(
   const mintPublicKey = new PublicKey(nft.id);
   const ownerTokenAccount = nft.tokenAddress ? new PublicKey(nft.tokenAddress) : getAssociatedTokenAddressSync(mintPublicKey, wallet.publicKey);
 
-  const transaction = new Transaction().add(
+  const instructions: TransactionInstruction[] = [
     createSplBurnInstruction(
       ownerTokenAccount, // account to burn from
       mintPublicKey,     // mint
@@ -157,8 +173,8 @@ export async function burnNft(
       wallet.publicKey,     // destination (refund lamports to)
       wallet.publicKey      // owner of account to close
     )
-  );
-  return sendTransaction(transaction, connection, wallet);
+  ];
+  return sendTransaction(instructions, connection, wallet);
 }
 
 // Burn SPL Token
@@ -174,16 +190,17 @@ export async function burnSplToken(
   const rawAmount = BigInt(Math.round(amount * (10 ** token.decimals)));
   const ownerTokenAccount = token.tokenAddress ? new PublicKey(token.tokenAddress) : getAssociatedTokenAddressSync(mintPublicKey, wallet.publicKey);
   
-  const transaction = new Transaction().add(
+  const instructions: TransactionInstruction[] = [
     createSplBurnInstruction(
       ownerTokenAccount,
       mintPublicKey,
       wallet.publicKey,
       rawAmount
     )
-  );
-  if (rawAmount === token.rawBalance) {
-     transaction.add(
+  ];
+
+  if (rawAmount === token.rawBalance) { // If burning entire balance, also close account
+     instructions.push(
         createCloseAccountInstruction(
             ownerTokenAccount,    
             wallet.publicKey,     
@@ -192,7 +209,7 @@ export async function burnSplToken(
      );
   }
 
-  return sendTransaction(transaction, connection, wallet);
+  return sendTransaction(instructions, connection, wallet);
 }
 
 
@@ -202,20 +219,20 @@ export async function transferCNft(
   wallet: WalletContextState,
   cnft: CNft,
   recipientAddress: PublicKey,
-  rpcUrl: string // Pass rpcUrl for Helius calls
+  rpcUrl: string
 ): Promise<string> {
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or doesn't support signing.");
   if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing.");
 
   const assetProof = await getHeliusAssetProof(cnft.id, rpcUrl);
   
-  const { compression, creators, ownership } = cnft.rawHeliusAsset;
+  const { compression, ownership } = cnft.rawHeliusAsset;
   if (!compression.data_hash || !compression.creator_hash || !compression.tree) {
     throw new Error("Essential compression data (data_hash, creator_hash, or tree) is missing.");
   }
 
   const treeAccount = new PublicKey(compression.tree);
-  const leafOwner = new PublicKey(ownership.owner); // Should be wallet.publicKey
+  const leafOwner = new PublicKey(ownership.owner); 
   const leafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : leafOwner;
 
   const transferInstruction = createBubblegumTransferInstruction(
@@ -238,8 +255,8 @@ export async function transferCNft(
     }
   );
 
-  const transaction = new Transaction().add(transferInstruction);
-  return sendTransaction(transaction, connection, wallet);
+  const instructions: TransactionInstruction[] = [transferInstruction];
+  return sendTransaction(instructions, connection, wallet);
 }
 
 
@@ -248,7 +265,7 @@ export async function burnCNft(
   connection: Connection,
   wallet: WalletContextState,
   cnft: CNft,
-  rpcUrl: string // Pass rpcUrl for Helius calls
+  rpcUrl: string 
 ): Promise<string> {
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error("Wallet not connected or doesn't support signing.");
   if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing.");
@@ -261,7 +278,7 @@ export async function burnCNft(
   }
   
   const treeAccount = new PublicKey(compression.tree);
-  const leafOwner =  new PublicKey(ownership.owner); // Should be wallet.publicKey
+  const leafOwner =  new PublicKey(ownership.owner); 
   const leafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : leafOwner;
 
 
@@ -284,6 +301,6 @@ export async function burnCNft(
     }
   );
 
-  const transaction = new Transaction().add(burnInstruction);
-  return sendTransaction(transaction, connection, wallet);
+  const instructions: TransactionInstruction[] = [burnInstruction];
+  return sendTransaction(instructions, connection, wallet);
 }
