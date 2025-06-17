@@ -13,7 +13,7 @@ import { SolflareWalletAdapter } from "@solana/wallet-adapter-solflare";
 import { BackpackWalletAdapter } from "@solana/wallet-adapter-backpack";
 import { SOLANA_CLUSTER, HELIUS_RPC_URL } from "@/config";
 
-require("@solana/wallet-adapter-react-ui/styles.css");
+// The styles.css import was removed from here
 
 export const WalletContextProvider: FC<{ children: ReactNode }> = ({
   children,
