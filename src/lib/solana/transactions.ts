@@ -37,15 +37,15 @@ async function sendTransaction(
   wallet: WalletContextState
 ): Promise<string> {
   // Capture wallet properties at start to avoid async changes
-  const publicKey = wallet.publicKey;
-  const signTransaction = wallet.signTransaction;
+  const payerPublicKey = wallet.publicKey;
+  const signTransactionFn = wallet.signTransaction;
   
-  if (!publicKey || !signTransaction) {
+  if (!payerPublicKey || !signTransactionFn) {
     throw new Error("Wallet not connected or doesn't support signing.");
   }
 
   // Additional validation for public key
-  if (!(publicKey instanceof PublicKey)) {
+  if (!(payerPublicKey instanceof PublicKey)) {
     throw new Error("Invalid wallet public key. Expected instance of PublicKey.");
   }
 
@@ -66,18 +66,15 @@ async function sendTransaction(
 
   const latestBlockhash = await connection.getLatestBlockhash();
   
-  // Ensure publicKey is still valid before creating message (already captured and validated as 'publicKey')
-  // This redundant check was removed as publicKey is now a const captured at the start.
-
   const messageV0 = new TransactionMessage({
-    payerKey: publicKey, 
+    payerKey: payerPublicKey, 
     recentBlockhash: latestBlockhash.blockhash,
     instructions: instructions,
   }).compileToV0Message();
 
   const versionedTransaction = new VersionedTransaction(messageV0);
   
-  const signedTransaction = await signTransaction(versionedTransaction); 
+  const signedTransaction = await signTransactionFn(versionedTransaction); 
   
   const signature = await connection.sendTransaction(signedTransaction, {
     maxRetries: 5,
@@ -260,7 +257,7 @@ export async function transferCNft(
   recipientAddress: PublicKey,
   rpcUrl: string
 ): Promise<string> {
-  const walletPublicKey = wallet.publicKey; // Capture wallet's public key
+  const walletPublicKey = wallet.publicKey; 
   const walletSignTransaction = wallet.signTransaction;
 
   if (!walletPublicKey || !walletSignTransaction) {
@@ -272,6 +269,10 @@ export async function transferCNft(
   if (!(recipientAddress instanceof PublicKey)) {
     throw new Error('Recipient address is not a valid PublicKey instance for cNFT transfer.');
   }
+  if (!(BUBBLEGUM_PROGRAM_ID instanceof PublicKey)) {
+    throw new Error("Critical: BUBBLEGUM_PROGRAM_ID from SDK is not a valid PublicKey.");
+  }
+
 
   if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing.");
 
@@ -308,20 +309,17 @@ export async function transferCNft(
         throw new Error(`Proof element at index ${idx} is invalid (not a non-empty string). Received: ${p}`);
     }
     const pubkey = new PublicKey(p);
-    if (!(pubkey instanceof PublicKey)) throw new Error(`Proof element pubkey at index ${idx} is not a PublicKey.`);
     return { pubkey, isSigner: false, isWritable: false };
   });
 
   const transferInstructionAccounts = {
-    leafOwner, // The current owner of the cNFT
-    leafDelegate, // The delegate if any, otherwise the owner
+    leafOwner, 
+    leafDelegate, 
     newLeafOwner: recipientAddress,
     merkleTree: merkleTreeKey,
     logWrapper: LOCAL_SPL_NOOP_PROGRAM_ID,
     compressionProgram: LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
     systemProgram: SystemProgram.programId, 
-    // Note: The signer of the transaction (walletPublicKey) must be either leafOwner or leafDelegate.
-    // This is implicitly handled by who calls sendTransaction with the wallet.
   };
   
   const transferInstructionArgs = {
@@ -337,6 +335,12 @@ export async function transferCNft(
     transferInstructionArgs,
     anchorRemainingAccounts 
   );
+
+  if (!(transferInstruction.programId instanceof PublicKey)) {
+    console.warn("Warning: programId from createBubblegumTransferInstruction is not a PublicKey. Overwriting with BUBBLEGUM_PROGRAM_ID.");
+    transferInstruction.programId = BUBBLEGUM_PROGRAM_ID;
+  }
+
 
   const instructions: TransactionInstruction[] = [transferInstruction];
   return sendTransaction(instructions, connection, wallet);
@@ -358,6 +362,9 @@ export async function burnCNft(
   }
    if (!(walletPublicKey instanceof PublicKey)) {
     throw new Error("Invalid wallet public key. Expected instance of PublicKey.");
+  }
+  if (!(BUBBLEGUM_PROGRAM_ID instanceof PublicKey)) {
+    throw new Error("Critical: BUBBLEGUM_PROGRAM_ID from SDK is not a valid PublicKey.");
   }
 
   if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing.");
@@ -395,18 +402,16 @@ export async function burnCNft(
         throw new Error(`Proof element at index ${idx} is invalid (not a non-empty string). Received: ${p}`);
     }
     const pubkey = new PublicKey(p);
-    if (!(pubkey instanceof PublicKey)) throw new Error(`Proof element pubkey at index ${idx} is not a PublicKey for burn proof.`);
     return { pubkey, isSigner: false, isWritable: false };
   });
 
   const burnInstructionAccounts = {
-    leafOwner, // The current owner of the cNFT
-    leafDelegate, // The delegate if any, otherwise the owner
+    leafOwner, 
+    leafDelegate, 
     merkleTree: merkleTreeKey,
     logWrapper: LOCAL_SPL_NOOP_PROGRAM_ID,
     compressionProgram: LOCAL_SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
     systemProgram: SystemProgram.programId,
-    // Signer (walletPublicKey) must be leafOwner or leafDelegate
   };
 
   const burnInstructionArgs = {
@@ -417,12 +422,18 @@ export async function burnCNft(
     index: cnft.compression.leafId,
   };
   
-  const burnInstruction = createBubblegumBurnInstruction(
+  let burnInstruction = createBubblegumBurnInstruction(
     burnInstructionAccounts,
     burnInstructionArgs,
     anchorRemainingAccounts
   );
+  
+  if (!(burnInstruction.programId instanceof PublicKey)) {
+    console.warn("Warning: programId from createBubblegumBurnInstruction is not a PublicKey. Overwriting with BUBBLEGUM_PROGRAM_ID.");
+    burnInstruction.programId = BUBBLEGUM_PROGRAM_ID;
+  }
 
   const instructions: TransactionInstruction[] = [burnInstruction];
   return sendTransaction(instructions, connection, wallet);
 }
+
