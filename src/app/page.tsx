@@ -84,45 +84,6 @@ export default function HomePage() {
       setSelectedAssetId(null);
     }
   }, [connected, publicKey, loadAssets]);
-  
-  // Expose global functions
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      (window as any).transferSelectedAsset = async (recipientAddressString: string, amount?: number) => {
-        if (!selectedAsset) {
-          toast({ title: "Error", description: "No asset selected.", variant: "destructive" });
-          return;
-        }
-        try {
-          const recipientPublicKey = new PublicKey(recipientAddressString);
-          await handleConfirmTransfer(recipientPublicKey.toBase58(), amount);
-        } catch (error: any) {
-           toast({ title: "Transfer Failed", description: error.message, variant: "destructive" });
-        }
-      };
-      (window as any).burnSelectedAsset = async (amount?: number) => {
-         if (!selectedAsset) {
-          toast({ title: "Error", description: "No asset selected.", variant: "destructive" });
-          return;
-        }
-        try {
-          await handleConfirmBurn(amount);
-        } catch (error: any) {
-           toast({ title: "Burn Failed", description: error.message, variant: "destructive" });
-        }
-      };
-    }
-    return () => {
-      if (typeof window !== 'undefined') {
-        delete (window as any).transferSelectedAsset;
-        delete (window as any).burnSelectedAsset;
-      }
-    };
-  }, [selectedAsset, connection, wallet, toast, handleConfirmTransfer, handleConfirmBurn]); // Added handleConfirmTransfer and handleConfirmBurn to dependencies
-
-  const handleSelectAsset = (assetId: string | null) => {
-    setSelectedAssetId(assetId);
-  };
 
   const handleConfirmTransfer = useCallback(async (recipientAddress: string, amount?: number) => {
     if (!selectedAsset || !publicKey || !sendTransaction) {
@@ -194,6 +155,45 @@ export default function HomePage() {
       toast({ title: "Burn Failed", description: error.message, variant: "destructive" });
     }
   }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets]);
+  
+  // Expose global functions
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).transferSelectedAsset = async (recipientAddressString: string, amount?: number) => {
+        if (!selectedAsset) {
+          toast({ title: "Error", description: "No asset selected.", variant: "destructive" });
+          return;
+        }
+        try {
+          const recipientPublicKey = new PublicKey(recipientAddressString);
+          await handleConfirmTransfer(recipientPublicKey.toBase58(), amount);
+        } catch (error: any) {
+           toast({ title: "Transfer Failed", description: error.message, variant: "destructive" });
+        }
+      };
+      (window as any).burnSelectedAsset = async (amount?: number) => {
+         if (!selectedAsset) {
+          toast({ title: "Error", description: "No asset selected.", variant: "destructive" });
+          return;
+        }
+        try {
+          await handleConfirmBurn(amount);
+        } catch (error: any) {
+           toast({ title: "Burn Failed", description: error.message, variant: "destructive" });
+        }
+      };
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        delete (window as any).transferSelectedAsset;
+        delete (window as any).burnSelectedAsset;
+      }
+    };
+  }, [selectedAsset, connection, wallet, toast, handleConfirmTransfer, handleConfirmBurn]);
+
+  const handleSelectAsset = (assetId: string | null) => {
+    setSelectedAssetId(assetId);
+  };
 
   const AssetList = ({ assets }: { assets: Asset[] }) => (
     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 p-1">
