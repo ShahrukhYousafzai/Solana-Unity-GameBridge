@@ -2,7 +2,8 @@
 import type { Connection } from "@solana/web3.js";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import type { Nft, CNft, SplToken, HeliusAsset, Asset } from "@/types/solana";
-import type { HeliusAssetProof } from "./helius"; // Assuming HeliusAssetProof is still relevant and defined in a separate helius.ts or moved here.
+import type { HeliusAssetProof } from "./helius";
+import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 
 
 // Helper to call Helius API and handle common error structure
@@ -19,6 +20,7 @@ const callHeliusApi = async (rpcUrl: string, body: object): Promise<any> => {
     if (errorMessageLower?.includes("access forbidden") || errorMessageLower?.includes("unauthorized") || data.error.code === 403 || (data.error.code === -32603 && errorMessageLower?.includes("forbidden"))) {
       message += " This often indicates an issue with your Helius API key. Please ensure NEXT_PUBLIC_HELIUS_API_KEY is set correctly in your environment and is valid.";
     }
+    console.error("[AssetLoader] Helius API Error Details:", JSON.stringify(data.error, null, 2));
     throw new Error(message);
   }
   return data.result;
@@ -38,9 +40,10 @@ const searchHeliusAssets = async (ownerAddress: string, rpcUrl: string): Promise
         limit: 1000,
         tokenType: "all", 
         displayOptions: { 
-          showNativeBalance: false, 
           showUnverifiedCollections: true, 
-          showCollectionMetadata: true, 
+          showCollectionMetadata: true,
+          showNativeBalance: false, // Keep this false unless SOL balance is explicitly needed as an asset
+          // showFungible: true, // Removed as it caused an API error; tokenType: "all" should cover fungibles
         }
       },
     });
@@ -112,15 +115,16 @@ const normalizeHeliusAssetToAppAsset = (heliusAsset: HeliusAsset): Asset | null 
   }
   
   // Fungible Tokens (SPL & Token-2022)
-  if (heliusAsset.interface === "FungibleAsset" || heliusAsset.interface === "FungibleToken" || heliusAsset.token_info || heliusAsset.spl_token_info) {
+  // Check for token_info first as it's more comprehensive for fungibles from searchAssets
+  const tokenInfo = heliusAsset.token_info;
+  if (tokenInfo || heliusAsset.interface === "FungibleAsset" || heliusAsset.interface === "FungibleToken" || heliusAsset.spl_token_info) {
     console.log(`[AssetLoader] Attempting to normalize as Token: ${heliusAsset.id} (Name: ${commonName || 'N/A'}, Interface: ${heliusAsset.interface})`);
-    const tokenInfo = heliusAsset.token_info;
-    const splTokenInfo = heliusAsset.spl_token_info;
 
     let decimals: number;
     let balance: number; // UI balance
     let rawBalanceBigInt: bigint;
     let tokenAccount: string | undefined = heliusAsset.ownership.token_account;
+    let tokenProgramIdToStore: string = TOKEN_PROGRAM_ID.toBase58(); // Default to standard SPL
 
     if (tokenInfo) { 
       console.log(`[AssetLoader] Using token_info for ${heliusAsset.id}:`, tokenInfo);
@@ -132,15 +136,35 @@ const normalizeHeliusAssetToAppAsset = (heliusAsset: HeliusAsset): Asset | null 
         console.warn(`[AssetLoader] token_info for ${heliusAsset.id} missing raw_token_amount or it's empty. Calculating from UI balance. This might lead to precision loss.`);
         rawBalanceBigInt = BigInt(Math.round(balance * (10 ** decimals)));
       }
-      if (!tokenAccount && tokenInfo.token_program) tokenAccount = heliusAsset.ownership.owner; 
-    } else if (splTokenInfo) { 
+      if (!tokenAccount && tokenInfo.token_program) tokenAccount = heliusAsset.ownership.owner; // Fallback if ATA not directly in ownership
+
+      if (tokenInfo.token_program === TOKEN_2022_PROGRAM_ID.toBase58()) {
+        tokenProgramIdToStore = TOKEN_2022_PROGRAM_ID.toBase58();
+      }
+
+    } else if (heliusAsset.spl_token_info) { 
+      // Fallback to spl_token_info if token_info is missing, though less likely with searchAssets
+      const splTokenInfo = heliusAsset.spl_token_info;
       console.log(`[AssetLoader] Using spl_token_info for ${heliusAsset.id}:`, splTokenInfo);
       decimals = splTokenInfo.decimals;
       rawBalanceBigInt = BigInt(splTokenInfo.balance); 
       balance = Number(rawBalanceBigInt) / (10 ** decimals);
-      tokenAccount = splTokenInfo.token_account || heliusAsset.ownership.owner;
+      tokenAccount = splTokenInfo.token_account || heliusAsset.ownership.owner; // Fallback for token account
+      // Determining program ID from spl_token_info is harder; mint's program_id is needed.
+      // This path implies Helius didn't provide full token_info.
+      // We might need to fetch mint info separately or rely on a convention if this path is common.
+      // For now, it will use the default tokenProgramIdToStore (standard SPL) unless overwritten.
+      // Check ownership.program_owner if it corresponds to the mint for Token-2022.
+      // This is less reliable. The primary source should be token_info.token_program.
+      if(heliusAsset.ownership?.program_owner === TOKEN_2022_PROGRAM_ID.toBase58()){
+         console.warn(`[AssetLoader] Inferring Token-2022 program ID from ownership.program_owner for ${heliusAsset.id} as token_info.token_program was missing.`);
+         tokenProgramIdToStore = TOKEN_2022_PROGRAM_ID.toBase58();
+      } else {
+        console.warn(`[AssetLoader] Token ${heliusAsset.id} missing token_info.token_program. Defaulting to standard SPL program ID from spl_token_info path.`);
+      }
+
     } else {
-      console.warn(`[AssetLoader] Asset ${heliusAsset.id} (Interface: ${heliusAsset.interface}) looks like a token but lacks both token_info and spl_token_info. Skipping.`);
+      console.warn(`[AssetLoader] Asset ${heliusAsset.id} (Interface: ${heliusAsset.interface}) looks like a token but lacks sufficient token_info or spl_token_info. Skipping.`);
       return null;
     }
 
@@ -149,11 +173,11 @@ const normalizeHeliusAssetToAppAsset = (heliusAsset: HeliusAsset): Asset | null 
       return null;
     }
     
-    const tokenName = commonName || tokenInfo?.symbol || splTokenInfo?.mint?.substring(0,6) || `Token ${heliusAsset.id.substring(0, 6)}...`;
+    const tokenName = commonName || tokenInfo?.symbol || heliusAsset.id.substring(0, 6) + "...";
     const tokenSymbolFromMeta = commonSymbol || tokenInfo?.symbol;
     const tokenSymbol = tokenSymbolFromMeta ? tokenSymbolFromMeta : heliusAsset.id.substring(0, 4).toUpperCase();
     
-    console.log(`[AssetLoader] Successfully normalized as Token: ${tokenName} (${tokenSymbol}), Balance: ${balance}`);
+    console.log(`[AssetLoader] Successfully normalized as Token: ${tokenName} (${tokenSymbol}), Balance: ${balance}, ProgramID: ${tokenProgramIdToStore}`);
     return {
       id: heliusAsset.id, // Mint address
       name: tokenName,
@@ -166,6 +190,7 @@ const normalizeHeliusAssetToAppAsset = (heliusAsset: HeliusAsset): Asset | null 
       rawBalance: rawBalanceBigInt,
       tokenAddress: tokenAccount,
       rawHeliusAsset: heliusAsset,
+      tokenProgramId: tokenProgramIdToStore,
     } as SplToken;
   }
   
@@ -190,12 +215,10 @@ export const fetchHeliusAssetProof = async (assetId: string, rpcUrl: string): Pr
     console.log(`[AssetLoader/Proof] Successfully fetched asset proof for ${assetId}.`);
     return result as HeliusAssetProof;
   } catch (error) {
-    // Error already logged by callHeliusApi if it's an API error.
-    // If it's another type of error, log it here.
     if (!(error instanceof Error && error.message.startsWith("Helius API Error:"))) {
         console.error(`[AssetLoader/Proof] Error fetching Helius asset proof for ${assetId}:`, error);
-    }
-    throw error; // Re-throw to be caught by the caller if needed
+    } // Helius API errors are logged by callHeliusApi
+    throw error; 
   }
 };
 
@@ -225,21 +248,23 @@ export async function fetchAssetsForOwner(
         } else if (appAsset.type === "cnft") {
           cnfts.push(appAsset);
         } else if (appAsset.type === "token") {
-          if (appAsset.rawBalance > BigInt(0)) { // Ensure zero balance tokens are not pushed
-            tokens.push(appAsset);
-          } else {
-            console.log(`[AssetLoader] Filtered out zero balance token post-normalization: ${appAsset.name} (${appAsset.id})`);
-          }
+          // Zero balance check is now inside normalizeHeliusAssetToAppAsset
+          tokens.push(appAsset);
         }
       }
     }
   } catch (error: any) {
     // The error message is constructed in callHeliusApi
-    heliusWarning = error.message || "Failed to load assets from Helius due to an unknown error.";
-    // No need to console.error here as callHeliusApi or searchHeliusAssets would have logged the specifics.
+    const specificMessage = error.message || "Failed to load assets from Helius due to an unknown error.";
+    if (specificMessage.startsWith("Helius API Error:")) {
+        heliusWarning = specificMessage;
+    } else {
+        heliusWarning = `An unexpected error occurred while fetching assets: ${specificMessage}`;
+    }
+    // No console.error here as callHeliusApi or searchHeliusAssets already logged specifics for API errors.
+    // Other errors are re-thrown by searchHeliusAssets if not API errors.
   }
 
   console.log(`[AssetLoader] Asset fetch complete. NFTs: ${nfts.length}, cNFTs: ${cnfts.length}, Tokens: ${tokens.length}. Helius Warning: ${heliusWarning || 'None'}`);
   return { nfts, cnfts, tokens, heliusWarning };
 }
-

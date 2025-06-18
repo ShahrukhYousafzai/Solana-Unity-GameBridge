@@ -35,6 +35,7 @@ export interface SplToken extends BaseAsset {
   balance: number; // UI formatted balance
   rawBalance: bigint; // Raw balance as bigint
   tokenAddress?: string; // Associated Token Account address holding the balance
+  tokenProgramId: string; // The program ID of the token (TOKEN_PROGRAM_ID or TOKEN_2022_PROGRAM_ID)
 }
 
 export type Asset = Nft | CNft | SplToken;
@@ -91,6 +92,7 @@ export interface HeliusAsset {
     ownership_model: "single" | "token";
     owner: string;
     token_account?: string;
+    program_owner?: string; // Added to potentially help identify token program
   };
   supply?: {
     print_max_supply: number;
@@ -103,7 +105,7 @@ export interface HeliusAsset {
     symbol?: string;
     balance: number; // This is already adjusted for decimals by Helius
     decimals: number;
-    token_program?: string;
+    token_program?: string; // Program ID of the token mint
     price_info?: {
       price_per_token: number;
       total_price: number;
@@ -111,7 +113,7 @@ export interface HeliusAsset {
     };
     raw_token_amount?: string; // Raw token amount (not factoring in decimals)
   };
-  spl_token_info?: {
+  spl_token_info?: { // This typically refers to the token account, not the mint itself directly for program_id
     token_account: string;
     balance: string; 
     decimals: number;
