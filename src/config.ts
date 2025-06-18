@@ -5,6 +5,7 @@ import type { WalletAdapterNetwork } from "@solana/wallet-adapter-base";
 // Ensure NEXT_PUBLIC_HELIUS_API_KEY is set in your .env.local file.
 export const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY; 
 // This is where the Custodial Wallet Address is read from environment variables.
+// Ensure NEXT_PUBLIC_CUSTODIAL_WALLET_ADDRESS is set in your .env.local file.
 export const CUSTODIAL_WALLET_ADDRESS = process.env.NEXT_PUBLIC_CUSTODIAL_WALLET_ADDRESS;
 
 export type SupportedSolanaNetwork = 'mainnet-beta' | 'devnet'; // Using string literals for type safety
@@ -29,3 +30,4 @@ export const getRpcUrl = (network: SupportedSolanaNetwork, apiKey: string | unde
   console.warn(`Unsupported network ${network} with Helius API key. Falling back to public Mainnet RPC.`);
   return "https://api.mainnet-beta.solana.com";
 };
+
