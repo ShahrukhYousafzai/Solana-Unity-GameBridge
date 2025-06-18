@@ -45,7 +45,7 @@ declare global {
     ) => Promise<UnityInstance>;
     unityInstance?: UnityInstance;
     unityBridge?: any;
-    UnityGame?: { 
+    UnityGame?: {
       SendMessage: (gameObjectName: string, methodName: string, message: string | number | object) => void;
     };
   }
@@ -97,11 +97,6 @@ export default function HomePage() {
   useEffect(() => {
     if (typeof window !== 'undefined' && canvasRef.current) {
       if (typeof window.createUnityInstance === 'function') {
-        // Ensure UNITY_GAME_BUILD_BASE_NAME is correctly set in your .env file
-        // and matches your Unity "Product Name" (when "Name Files As Hashes" is disabled in Unity build settings).
-        // Example: If UNITY_GAME_BUILD_BASE_NAME="MyGame", files should be:
-        // /Build/MyGame.data, /Build/MyGame.framework.js, /Build/MyGame.wasm
-        // The loader script is referenced in layout.tsx: /Build/MyGame.loader.js
         const unityConfig = {
           dataUrl: `/Build/${UNITY_GAME_BUILD_BASE_NAME}.data`,
           frameworkUrl: `/Build/${UNITY_GAME_BUILD_BASE_NAME}.framework.js`,
@@ -109,36 +104,49 @@ export default function HomePage() {
           // companyName: "YourCompany", // Optional: Set in Unity Player Settings
           // productName: UNITY_GAME_BUILD_BASE_NAME, // Optional: Set in Unity Player Settings
         };
-        console.log("[UnityBridge] Attempting to create Unity instance with config:", unityConfig);
+        console.log("[UnityBridge] Attempting to create Unity instance. UNITY_GAME_BUILD_BASE_NAME from config:", UNITY_GAME_BUILD_BASE_NAME);
+        console.log("[UnityBridge] Using Unity config:", JSON.stringify(unityConfig, null, 2));
+        console.log("[UnityBridge] Canvas element:", canvasRef.current);
 
         window.createUnityInstance(canvasRef.current, unityConfig, (progress) => {
+          // console.log(`[UnityBridge] Loading progress: ${progress * 100}%`); // Can be very verbose
           setUnityLoadingProgress(progress * 100);
         }).then((instance) => {
           console.log("[UnityBridge] Unity instance created successfully.");
           setUnityInstance(instance);
-          window.unityInstance = instance; 
+          window.unityInstance = instance;
           setIsUnityLoading(false);
-          sendToUnity("GameManager", "OnUnityReady", {}); 
+          sendToUnity("GameManager", "OnUnityReady", {});
         }).catch((error) => {
           console.error("[UnityBridge] Error creating Unity instance:", error);
-          setIsUnityLoading(false); 
-          sendToUnity("GameManager", "OnUnityLoadError", { error: error.message });
-          toast({ title: "Unity Load Error", description: `Failed to load game: ${error.message}. Check console. Ensure game files are in /public/Build/ and paths in page.tsx (unityConfig) and layout.tsx (loader script) correctly use UNITY_GAME_BUILD_BASE_NAME to match your non-hashed Unity build filenames.`, variant: "destructive", duration: 15000 });
+          setIsUnityLoading(false);
+          sendToUnity("GameManager", "OnUnityLoadError", { error: error.message || "Unknown error during Unity instance creation." });
+          toast({
+            title: "Unity Load Error",
+            description: `Failed to load game: ${error.message || 'Unknown error'}. Check browser console. Ensure: \n1. UNITY_GAME_BUILD_BASE_NAME in .env matches Unity Product Name. \n2. "Name Files As Hashes" is OFF in Unity Build Settings. \n3. Build files are in /public/Build/ and filenames match (e.g., ${UNITY_GAME_BUILD_BASE_NAME}.data). \n4. Loader script in layout.tsx (e.g., ${UNITY_GAME_BUILD_BASE_NAME}.loader.js) is correct.`,
+            variant: "destructive",
+            duration: 20000
+          });
         });
       } else {
-        console.warn("[UnityBridge] window.createUnityInstance is not available. Check if Unity loader script (e.g., MyGame.loader.js) is correctly loaded via <Script> in layout.tsx, and that your Unity build files are in /public/Build/ and named according to UNITY_GAME_BUILD_BASE_NAME.");
+        console.error("[UnityBridge] CRITICAL: window.createUnityInstance is not available. This means the Unity loader script (e.g., " + UNITY_GAME_BUILD_BASE_NAME + ".loader.js) specified in src/app/layout.tsx likely failed to load (404 Not Found?) or execute. Check browser Network tab and Console for errors related to this script.");
         const timer = setTimeout(() => {
-          if (isUnityLoading) { 
+          if (isUnityLoading) {
                setIsUnityLoading(false);
-               sendToUnity("GameManager", "OnUnityLoadError", { error: "Unity loader script (createUnityInstance) not found."});
-               toast({ title: "Game Loader Error", description: "Could not initialize Unity game loader. Check browser console and ensure Unity build files (matching UNITY_GAME_BUILD_BASE_NAME) and the loader script (e.g., MyGame.loader.js) are present and correctly pathed.", variant: "destructive", duration: 15000 });
+               sendToUnity("GameManager", "OnUnityLoadError", { error: "Unity loader script (createUnityInstance) not found on window."});
+               toast({
+                title: "Game Loader Script Error",
+                description: `Essential Unity loader script (e.g., ${UNITY_GAME_BUILD_BASE_NAME}.loader.js) not found or failed to run. \n1. Verify its path in src/app/layout.tsx. \n2. Ensure it's in /public/Build/. \n3. Check browser's Network tab for 404 errors and Console for script errors.`,
+                variant: "destructive",
+                duration: 20000
+              });
           }
-        }, 5000); 
+        }, 5000);
         return () => clearTimeout(timer);
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); 
+  }, []);
 
 
   const fetchSolBalance = useCallback(async () => {
@@ -185,7 +193,7 @@ export default function HomePage() {
       setTokens(fetchedTokens);
       sendToUnity("GameManager", "OnAssetsLoaded", { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens, solBalance: fetchedSolBalance });
 
-      if (!heliusWarning) { 
+      if (!heliusWarning) {
         toast({ title: "Asset Scan Complete", description: `Found ${fetchedNfts.length} NFTs, ${fetchedCnfts.length} cNFTs, ${fetchedTokens.length} Tokens, and ${fetchedSolBalance.toFixed(SOL_DECIMALS)} SOL on ${currentNetwork}.` });
       }
     } catch (error: any) {
@@ -215,7 +223,7 @@ export default function HomePage() {
       connectWallet: async () => {
         try {
           if (!connected) {
-            await connectWalletAdapter(); 
+            await connectWalletAdapter();
           } else {
             sendToUnity("GameManager", "OnWalletConnected", { publicKey: publicKey?.toBase58() });
           }
@@ -237,7 +245,7 @@ export default function HomePage() {
       getPublicKey: () => {
         const pk = publicKey?.toBase58() || null;
         sendToUnity("GameManager", "OnPublicKeyReceived", { publicKey: pk });
-        return pk; 
+        return pk;
       },
       disconnectWallet: async () => {
         try {
@@ -252,10 +260,10 @@ export default function HomePage() {
         const available = availableWallets.map(w => ({
           name: w.adapter.name,
           icon: w.adapter.icon,
-          readyState: w.adapter.readyState 
+          readyState: w.adapter.readyState
         }));
         sendToUnity("GameManager", "OnAvailableWalletsReceived", { wallets: available });
-        return available; 
+        return available;
       },
       selectWallet: async (walletName: string) => {
         try {
@@ -266,7 +274,7 @@ export default function HomePage() {
             sendToUnity("GameManager", "OnWalletConnectionError", { error: err, action: "select_wallet" });
             return;
           }
-          select(walletName as WalletName); 
+          select(walletName as WalletName);
           sendToUnity("GameManager", "OnWalletSelectAttempted", { walletName });
         } catch (error: any) {
           console.error("[UnityBridge] selectWallet error:", error);
@@ -286,7 +294,7 @@ export default function HomePage() {
             if (heliusWarning) {
                  sendToUnity("GameManager", "OnHeliusWarning", { warning: heliusWarning, isError: heliusWarning.toLowerCase().includes("api key")});
             }
-            setNfts(fetchedNfts); 
+            setNfts(fetchedNfts);
             setCnfts(fetchedCnfts);
             sendToUnity("GameManager", "OnUserNFTsRequested", { nfts: fetchedNfts, cnfts: fetchedCnfts });
         } catch (e:any) {
@@ -305,13 +313,13 @@ export default function HomePage() {
         sendToUnity("GameManager", "OnAssetsLoadingStateChanged", { isLoading: true });
         try {
             const [fetchedSolBalance, { tokens: fetchedTokens, heliusWarning }] = await Promise.all([
-                fetchSolBalance(), 
-                fetchAssetsForOwner(publicKey.toBase58(), rpcUrl, connection, wallet) 
+                fetchSolBalance(),
+                fetchAssetsForOwner(publicKey.toBase58(), rpcUrl, connection, wallet)
             ]);
             if (heliusWarning) {
                  sendToUnity("GameManager", "OnHeliusWarning", { warning: heliusWarning, isError: heliusWarning.toLowerCase().includes("api key")});
             }
-            setTokens(fetchedTokens); 
+            setTokens(fetchedTokens);
             sendToUnity("GameManager", "OnUserTokensRequested", { tokens: fetchedTokens, solBalance: fetchedSolBalance });
         } catch (e:any) {
             sendToUnity("GameManager", "OnUserTokensRequested", { error: e.message, tokens:[], solBalance: 0});
@@ -323,7 +331,7 @@ export default function HomePage() {
       getSolBalance: async () => {
         if (!publicKey) {
           sendToUnity("GameManager", "OnSolBalanceUpdateFailed", { error: "Wallet not connected" });
-          return 0; 
+          return 0;
         }
         return fetchSolBalance();
       },
@@ -339,7 +347,7 @@ export default function HomePage() {
           const signature = await transferSol(connection, wallet, recipientPublicKey, amountSol);
           toast({ title: "SOL Transfer Initiated", description: `Signature: ${signature}`, action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank" rel="noopener noreferrer">View</a> });
           sendToUnity("GameManager", "OnTransactionSubmitted", { action: "transfer_sol", signature, explorerUrl: getTransactionExplorerUrl(signature, currentNetwork) });
-          fetchSolBalance(); 
+          fetchSolBalance();
         } catch (error: any) {
           toast({ title: "SOL Transfer Failed", description: error.message, variant: "destructive" });
           sendToUnity("GameManager", "OnTransactionError", { action: "transfer_sol", error: error.message });
@@ -362,7 +370,7 @@ export default function HomePage() {
           const signature = await transferSplToken(connection, wallet, token, recipientPublicKey, amount);
           toast({ title: "Token Transfer Initiated", description: `${token.symbol} Signature: ${signature}`, action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank" rel="noopener noreferrer">View</a> });
           sendToUnity("GameManager", "OnTransactionSubmitted", { action: "transfer_token", signature, mint, explorerUrl: getTransactionExplorerUrl(signature, currentNetwork) });
-          loadUserAssets(); 
+          loadUserAssets();
         } catch (error: any) {
           toast({ title: "Token Transfer Failed", description: error.message, variant: "destructive" });
           sendToUnity("GameManager", "OnTransactionError", { action: "transfer_token", error: error.message, mint });
@@ -392,7 +400,7 @@ export default function HomePage() {
           }
           toast({ title: "NFT Transfer Initiated", description: `Signature: ${signature}`, action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank" rel="noopener noreferrer">View</a> });
           sendToUnity("GameManager", "OnTransactionSubmitted", { action: "transfer_nft", signature, mint, explorerUrl: getTransactionExplorerUrl(signature, currentNetwork) });
-          loadUserAssets(); 
+          loadUserAssets();
         } catch (error: any) {
           toast({ title: "NFT Transfer Failed", description: error.message, variant: "destructive" });
           sendToUnity("GameManager", "OnTransactionError", { action: "transfer_nft", error: error.message, mint });
@@ -412,7 +420,7 @@ export default function HomePage() {
           const signature = await burnSol(connection, wallet, amountSol);
           toast({ title: "SOL Burn Initiated", description: `Signature: ${signature}`, action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank" rel="noopener noreferrer">View</a> });
           sendToUnity("GameManager", "OnTransactionSubmitted", { action: "burn_sol", signature, explorerUrl: getTransactionExplorerUrl(signature, currentNetwork) });
-          fetchSolBalance(); 
+          fetchSolBalance();
         } catch (error: any) {
           toast({ title: "SOL Burn Failed", description: error.message, variant: "destructive" });
           sendToUnity("GameManager", "OnTransactionError", { action: "burn_sol", error: error.message });
@@ -421,7 +429,7 @@ export default function HomePage() {
           sendToUnity("GameManager", "OnTransactionSubmitting", { action: "burn_sol", submitting: false });
         }
       },
-      burnNFT: async (mint: string, amount?: number) => { 
+      burnNFT: async (mint: string, amount?: number) => {
         if (isSubmittingTransaction) return sendToUnity("GameManager", "OnTransactionError", { action: "burn_asset", error: "Transaction in progress" });
         const asset = allFetchedAssets.find(a => a.id === mint);
         if (!asset) return sendToUnity("GameManager", "OnTransactionError", { action: "burn_asset", error: "Asset not found in wallet" });
@@ -448,7 +456,7 @@ export default function HomePage() {
           }
           toast({ title: "Asset Burn Initiated", description: `Signature: ${signature}`, action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank" rel="noopener noreferrer">View</a> });
           sendToUnity("GameManager", "OnTransactionSubmitted", { action: "burn_asset", signature, mint, explorerUrl: getTransactionExplorerUrl(signature, currentNetwork) });
-          loadUserAssets(); 
+          loadUserAssets();
         } catch (error: any) {
           toast({ title: "Asset Burn Failed", description: error.message, variant: "destructive" });
           sendToUnity("GameManager", "OnTransactionError", { action: "burn_asset", error: error.message, mint });
@@ -473,7 +481,7 @@ export default function HomePage() {
           const signature = await mintStandardNft(connection, wallet, metadataUri, name, symbol);
           toast({ title: "NFT Mint Successful!", description: `Signature: ${signature}`, action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank" rel="noopener noreferrer">View</a>});
           sendToUnity("GameManager", "OnTransactionSubmitted", { action: "mint_nft", signature, name, symbol, metadataUri, explorerUrl: getTransactionExplorerUrl(signature, currentNetwork) });
-          loadUserAssets(); 
+          loadUserAssets();
         } catch (error: any) {
           console.error("NFT Minting failed:", error);
           toast({ title: "NFT Mint Failed", description: error.message, variant: "destructive" });
@@ -501,7 +509,7 @@ export default function HomePage() {
           if (tokenMintOrSol.toUpperCase() === "SOL") {
             signature = await depositSol(connection, wallet, amount, CUSTODIAL_WALLET_ADDRESS);
           } else {
-            const token = tokens.find(t => t.id === tokenMintOrSol); 
+            const token = tokens.find(t => t.id === tokenMintOrSol);
             if (!token) {
                 sendToUnity("GameManager", "OnTransactionError", { action: "deposit_funds", error: "Token for deposit not found in user's wallet.", tokenMint: tokenMintOrSol });
                 setIsSubmittingTransaction(false); sendToUnity("GameManager", "OnTransactionSubmitting", { action: "deposit_funds", submitting: false, tokenMint: tokenMintOrSol });
@@ -511,7 +519,7 @@ export default function HomePage() {
           }
           toast({ title: "Deposit Initiated", description: `Signature: ${signature}`, action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank" rel="noopener noreferrer">View</a> });
           sendToUnity("GameManager", "OnTransactionSubmitted", { action: "deposit_funds", signature, tokenMint: tokenMintOrSol, explorerUrl: getTransactionExplorerUrl(signature, currentNetwork) });
-          loadUserAssets(); 
+          loadUserAssets();
         } catch (error: any) {
           toast({ title: "Deposit Failed", description: error.message, variant: "destructive" });
           sendToUnity("GameManager", "OnTransactionError", { action: "deposit_funds", error: error.message, tokenMint: tokenMintOrSol });
@@ -556,12 +564,12 @@ export default function HomePage() {
         }
       },
       setNetwork: (network: SupportedSolanaNetwork) => {
-        setCurrentNetwork(network); 
+        setCurrentNetwork(network);
         sendToUnity("GameManager", "OnNetworkChanged", { network });
       },
       getCurrentNetwork: () => {
         sendToUnity("GameManager", "OnCurrentNetworkReceived", { network: currentNetwork });
-        return currentNetwork; 
+        return currentNetwork;
       },
     };
 
@@ -572,19 +580,20 @@ export default function HomePage() {
       if (unityInstance?.Quit) {
         unityInstance.Quit().then(() => console.log("Unity instance quit.")).catch(console.error);
         setUnityInstance(null);
-      } else if (window.unityInstance?.Quit) { 
+      } else if (window.unityInstance?.Quit) {
          window.unityInstance.Quit().then(() => console.log("Global window.unityInstance quit.")).catch(console.error);
         window.unityInstance = undefined;
       }
     };
   }, [
-    connected, publicKey, currentNetwork, rpcUrl, connection, wallet, 
-    nfts, cnfts, tokens, allFetchedAssets, solBalance, 
-    connectWalletAdapter, disconnectWalletAdapter, select, sendTransaction, signTransaction, availableWallets, 
-    loadUserAssets, fetchSolBalance, 
-    setCurrentNetwork, 
-    toast, sendToUnity, 
-    unityInstance 
+    connected, publicKey, currentNetwork, rpcUrl, connection, wallet,
+    nfts, cnfts, tokens, allFetchedAssets, solBalance,
+    connectWalletAdapter, disconnectWalletAdapter, select, sendTransaction, signTransaction, availableWallets,
+    loadUserAssets, fetchSolBalance,
+    setCurrentNetwork,
+    toast, sendToUnity,
+    unityInstance,
+    // isLoadingAssets, isSubmittingTransaction, // Removed as per previous optimization
   ]);
 
 
@@ -602,7 +611,7 @@ export default function HomePage() {
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-background z-50">
              <div className="w-60 h-60 mb-4">
                 <img
-                     src={`/Build/${UNITY_GAME_BUILD_BASE_NAME}_Logo.png`} 
+                     src={`/Build/${UNITY_GAME_BUILD_BASE_NAME}_Logo.png`}
                      alt="Game Logo"
                      className="w-full h-full object-contain"
                      data-ai-hint="phoenix fire"
@@ -611,7 +620,7 @@ export default function HomePage() {
              </div>
             <div className="w-3/4 max-w-md h-5 bg-muted rounded-full overflow-hidden relative shadow-inner">
               <div
-                className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-150 rounded-full" 
+                className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-150 rounded-full"
                 style={{ width: `${unityLoadingProgress}%`}}
               ></div>
               <div className="absolute inset-0 flex items-center justify-center">
@@ -623,17 +632,18 @@ export default function HomePage() {
              <p className="text-lg text-foreground mt-4">Loading Game...</p>
           </div>
         )}
+        {/* Conditionally render canvas container to ensure it's not affecting layout until loading is done */}
         {!isUnityLoading && (
             <canvas
                 ref={canvasRef}
                 id="unity-canvas"
-                className="w-full h-full block" 
-                style={{ background: 'transparent' }} 
-                tabIndex={-1} 
+                className="w-full h-full block" // Ensures it takes full space of parent
+                style={{ background: 'transparent' }} // Keep background transparent
+                tabIndex={-1} // Good for accessibility if canvas handles focus
             ></canvas>
         )}
       </main>
     </div>
   );
 }
-
+    
