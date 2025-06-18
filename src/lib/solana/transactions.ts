@@ -19,8 +19,8 @@ import type { WalletContextState } from "@solana/wallet-adapter-react";
 import type { Nft, CNft, SplToken } from "@/types/solana";
 import { 
   PROGRAM_ID as BUBBLEGUM_PROGRAM_ID,
-  createBurnInstruction as createBubblegumBurnInstructionSdk,
-  createTransferInstruction as createBubblegumTransferInstructionSdk,
+  createBurnInstruction as createBubblegumBurnInstruction,
+  createTransferInstruction as createBubblegumTransferInstruction,
 } from "@metaplex-foundation/mpl-bubblegum";
 import { 
   SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, 
@@ -48,8 +48,13 @@ async function sendTransaction(
 
   instructions.forEach((instruction, idx) => {
     if (!instruction.programId || !(instruction.programId instanceof PublicKey)) {
-      console.error("Problematic instruction:", JSON.stringify(instruction, null, 2));
-      throw new Error(`Instruction ${idx} has invalid or undefined programId.`);
+      const originalProgramId = (instruction as any)._programId;
+       if (originalProgramId && originalProgramId instanceof PublicKey) {
+         instruction.programId = originalProgramId;
+       } else {
+        console.error("Problematic instruction at index", idx, JSON.stringify(instruction, null, 2));
+        throw new Error(`Instruction ${idx} has invalid or undefined programId.`);
+       }
     }
     instruction.keys.forEach((key, keyIdx) => {
       if (!key.pubkey || !(key.pubkey instanceof PublicKey)) {
@@ -252,6 +257,20 @@ export async function burnSplToken(
   return sendTransaction(instructions, connection, wallet);
 }
 
+
+const mapProofForBubblegum = (assetProof: { proof: string[] }): AccountMeta[] => {
+  if (!assetProof.proof || !Array.isArray(assetProof.proof)) {
+    // Allow empty proof for canopy depth 0 trees or if Helius returns it empty
+    return []; 
+  }
+  return assetProof.proof.map((node) => ({
+    pubkey: new PublicKey(node),
+    isSigner: false,
+    isWritable: false,
+  }));
+};
+
+
 export async function transferCNft(
   connection: Connection,
   wallet: WalletContextState,
@@ -283,36 +302,29 @@ export async function transferCNft(
 
   const assetProof = await getHeliusAssetProof(cnft.id, rpcUrl);
   if (!assetProof || typeof assetProof.root !== 'string' || !assetProof.root.trim() ||
-      !Array.isArray(assetProof.proof) || 
       typeof assetProof.tree_id !== 'string' || !assetProof.tree_id.trim()) { 
-    throw new Error('Failed to retrieve valid asset proof (root, proof array, or tree_id missing or invalid).');
+    throw new Error('Failed to retrieve valid asset proof (root or tree_id missing or invalid).');
   }
-  // Allow empty proof for canopy depth 0 trees
-  if (assetProof.proof.some(p => typeof p !== 'string' || !p.trim()) && assetProof.proof.length > 0) {
-      throw new Error(`Asset proof contains invalid proof elements (non-string or empty string).`);
-  }
-
+  // Validation of proof elements happens in mapProofForBubblegum if proof is not empty
+  
   const merkleTreeKey = new PublicKey(assetProof.tree_id);
   const currentLeafOwner = new PublicKey(ownership.owner);
-  const currentLeafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : currentLeafOwner;
+  // Delegate defaults to owner if not present, which is what Bubblegum program expects
+  const currentLeafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : currentLeafOwner; 
 
   const [treeAuthority, _bump] = PublicKey.findProgramAddressSync(
     [merkleTreeKey.toBuffer()],
     BUBBLEGUM_PROGRAM_ID
   );
 
-  const proofPathAccountMetas: AccountMeta[] = assetProof.proof.map((node) => ({
-    pubkey: new PublicKey(node),
-    isSigner: false,
-    isWritable: false,
-  }));
+  const proofPathAsAccounts = mapProofForBubblegum(assetProof);
 
   const transferInstructionArgs = {
     root: bs58.decode(assetProof.root),
     dataHash: bs58.decode(compression.data_hash),
     creatorHash: bs58.decode(compression.creator_hash),
-    nonce: new BN(compression.leaf_id),
-    index: compression.leaf_id,
+    nonce: new BN(compression.leaf_id), // nonce is leaf_id (u64)
+    index: compression.leaf_id, // index is leaf_id (u32)
   };
   
   const transferInstructionAccounts = {
@@ -323,14 +335,18 @@ export async function transferCNft(
     merkleTree: merkleTreeKey,
     logWrapper: SPL_NOOP_PROGRAM_ID,
     compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
-    systemProgram: SystemProgram.programId, // Though optional in SDK type, explicitly including
-    anchorRemainingAccounts: proofPathAccountMetas,
+    anchorRemainingAccounts: proofPathAsAccounts,
   };
 
-  const transferInstruction = createBubblegumTransferInstructionSdk(
+  const transferInstruction = createBubblegumTransferInstruction(
     transferInstructionAccounts,
     transferInstructionArgs
   );
+  
+  if (!transferInstruction.programId || !(transferInstruction.programId instanceof PublicKey)) {
+     console.warn("SDK's createBubblegumTransferInstruction did not set programId or set it incorrectly. Manually setting to BUBBLEGUM_PROGRAM_ID.");
+     transferInstruction.programId = BUBBLEGUM_PROGRAM_ID;
+  }
   
   const instructions: TransactionInstruction[] = [transferInstruction];
   return sendTransaction(instructions, connection, wallet);
@@ -360,15 +376,14 @@ export async function burnCNft(
       typeof compression.leaf_id !== 'number') { 
     throw new Error("Essential compression data (data_hash, creator_hash, or leaf_id) is missing or invalid from rawHeliusAsset for burn.");
   }
+  if (typeof ownership.owner !== 'string' || !ownership.owner.trim()) {
+    throw new Error("Essential ownership data (owner) is missing or invalid from rawHeliusAsset for burn.");
+  }
 
   const assetProof = await getHeliusAssetProof(cnft.id, rpcUrl);
   if (!assetProof || typeof assetProof.root !== 'string' || !assetProof.root.trim() ||
-      !Array.isArray(assetProof.proof) ||
       typeof assetProof.tree_id !== 'string' || !assetProof.tree_id.trim()) {
-    throw new Error('Failed to retrieve valid asset proof for burn (root, proof array, or tree_id missing or invalid).');
-  }
-   if (assetProof.proof.some(p => typeof p !== 'string' || !p.trim()) && assetProof.proof.length > 0) {
-      throw new Error(`Asset proof (burn) contains invalid proof elements.`);
+    throw new Error('Failed to retrieve valid asset proof for burn (root or tree_id missing or invalid).');
   }
 
   const merkleTreeKey = new PublicKey(assetProof.tree_id);
@@ -380,11 +395,7 @@ export async function burnCNft(
     BUBBLEGUM_PROGRAM_ID
   );
 
-  const proofPathAccountMetas: AccountMeta[] = assetProof.proof.map((node) => ({
-    pubkey: new PublicKey(node),
-    isSigner: false,
-    isWritable: false,
-  }));
+  const proofPathAsAccounts = mapProofForBubblegum(assetProof);
   
   const burnInstructionArgs = {
     root: bs58.decode(assetProof.root),
@@ -401,16 +412,22 @@ export async function burnCNft(
     merkleTree: merkleTreeKey,
     logWrapper: SPL_NOOP_PROGRAM_ID,
     compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
-    systemProgram: SystemProgram.programId,
-    anchorRemainingAccounts: proofPathAccountMetas,
+    systemProgram: SystemProgram.programId, // Though often optional in SDK type, explicitly including
+    anchorRemainingAccounts: proofPathAsAccounts,
   };
   
-  const burnInstruction = createBubblegumBurnInstructionSdk(
+  const burnInstruction = createBubblegumBurnInstruction(
     burnInstructionAccounts,
     burnInstructionArgs
   );
+  
+  if (!burnInstruction.programId || !(burnInstruction.programId instanceof PublicKey)) {
+    console.warn("SDK's createBubblegumBurnInstruction did not set programId or set it incorrectly. Manually setting to BUBBLEGUM_PROGRAM_ID.");
+    burnInstruction.programId = BUBBLEGUM_PROGRAM_ID;
+  }
   
   const instructions: TransactionInstruction[] = [burnInstruction];
   return sendTransaction(instructions, connection, wallet);
 }
 
+    
