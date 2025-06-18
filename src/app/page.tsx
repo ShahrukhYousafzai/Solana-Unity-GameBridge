@@ -5,7 +5,7 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import dynamic from "next/dynamic";
-import { fetchAssetsForOwner } from "@/lib/helius";
+import { fetchAssetsForOwner } from "@/lib/asset-loader"; // Updated import
 import type { Asset, Nft, CNft, SplToken } from "@/types/solana";
 import { AssetDropdown } from "@/components/AssetDropdown";
 import { AssetCard } from "@/components/AssetCard";
@@ -51,7 +51,7 @@ export default function HomePage() {
   const selectedAsset = useMemo(() => allFetchedAssets.find(a => a.id === selectedAssetId) || null, [selectedAssetId, allFetchedAssets]);
 
   const loadAssets = useCallback(async () => {
-    if (!publicKey || !rpcUrl) {
+    if (!publicKey || !rpcUrl || !connection || !wallet) { // Added connection and wallet check for UMI
       setNfts([]);
       setCnfts([]);
       setTokens([]);
@@ -61,7 +61,8 @@ export default function HomePage() {
     setIsLoadingAssets(true);
     setSelectedAssetId(null); 
     try {
-      const { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens } = await fetchAssetsForOwner(publicKey.toBase58(), rpcUrl);
+      // Pass connection and wallet for UMI
+      const { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens } = await fetchAssetsForOwner(publicKey.toBase58(), rpcUrl, connection, wallet);
       setNfts(fetchedNfts);
       setCnfts(fetchedCnfts);
       setTokens(fetchedTokens);
@@ -73,7 +74,7 @@ export default function HomePage() {
     } finally {
       setIsLoadingAssets(false);
     }
-  }, [publicKey, toast, rpcUrl, currentNetwork]);
+  }, [publicKey, rpcUrl, connection, wallet, toast, currentNetwork]); // Added connection, wallet to dependencies
 
   useEffect(() => {
     if (connected && publicKey) {
@@ -107,7 +108,7 @@ export default function HomePage() {
       } else if (selectedAsset.type === "token") {
         if (typeof amount !== 'number' || amount <= 0) {
           toast({ title: "Error", description: "Invalid amount for token transfer.", variant: "destructive" });
-          setIsSubmittingTransaction(false); // Reset early on validation fail
+          setIsSubmittingTransaction(false);
           return;
         }
         signature = await transferSplToken(connection, wallet, selectedAsset as SplToken, recipientPublicKey, amount);
@@ -150,7 +151,7 @@ export default function HomePage() {
       } else if (selectedAsset.type === "token") {
         if (typeof amount !== 'number' || amount <= 0) {
           toast({ title: "Error", description: "Invalid amount for token burn.", variant: "destructive" });
-          setIsSubmittingTransaction(false); // Reset early on validation fail
+          setIsSubmittingTransaction(false);
           return;
         }
         signature = await burnSplToken(connection, wallet, selectedAsset as SplToken, amount);
@@ -346,5 +347,3 @@ export default function HomePage() {
     </div>
   );
 }
-
-    
