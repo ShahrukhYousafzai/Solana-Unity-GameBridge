@@ -601,11 +601,13 @@ export default function HomePage() {
         {isUnityLoading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-background z-50">
              <div className="w-60 h-60 mb-4">
-                <img src={`/Build/${UNITY_GAME_BUILD_BASE_NAME}_Logo.png`} 
+                <img 
+                     src={`/Build/${UNITY_GAME_BUILD_BASE_NAME}_Logo.png`} 
                      alt="Game Logo" 
-                     className="w-full h-full object-contain" 
+                     className="w-full h-full object-contain"
                      data-ai-hint="phoenix fire"
-                     onError={(e) => { (e.target as HTMLImageElement).src = 'https://placehold.co/240x240.png'; (e.target as HTMLImageElement).alt = 'Game Logo Placeholder'; }}/>
+                     onError={(e) => { (e.target as HTMLImageElement).src = 'https://placehold.co/240x240.png'; (e.target as HTMLImageElement).alt = 'Game Logo Placeholder'; }}
+                />
              </div>
             <div className="w-3/4 max-w-md h-5 bg-muted rounded-full overflow-hidden relative shadow-inner">
               <div
