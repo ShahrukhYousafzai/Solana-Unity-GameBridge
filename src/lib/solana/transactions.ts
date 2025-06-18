@@ -7,7 +7,7 @@ import {
   TransactionMessage,
   type AccountMeta,
   TransactionInstruction,
-  type SendTransactionError, 
+  SendTransactionError, 
   type Commitment,
   Keypair, 
 } from "@solana/web3.js";
@@ -561,3 +561,4 @@ export async function initiateWithdrawalRequest(
     return { success: false, message: `Frontend error initiating withdrawal: ${error.message}` };
   }
 }
+
