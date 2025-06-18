@@ -80,26 +80,26 @@ public class MainMenuManager : MonoBehaviour
             StartCoroutine(ShowGameMenu());
         }
 
-        // Subscribe to wallet events from GameManager
-        if (GameManager.Instance != null)
+        // Subscribe to wallet events from GameBridgeManager
+        if (GameBridgeManager.Instance != null)
         {
-            GameManager.Instance.OnWalletConnectedEvent += HandleWalletConnected;
-            GameManager.Instance.OnWalletDisconnectedEvent += HandleWalletDisconnected;
-            GameManager.Instance.OnWalletConnectionErrorEvent += HandleWalletError;
+            GameBridgeManager.Instance.OnWalletConnectedEvent += HandleWalletConnected;
+            GameBridgeManager.Instance.OnWalletDisconnectedEvent += HandleWalletDisconnected;
+            GameBridgeManager.Instance.OnWalletConnectionErrorEvent += HandleWalletError;
         }
         else
         {
-            Debug.LogError("MainMenuManager: GameManager.Instance is null in Start(). Ensure GameManager is in the scene and initialized before MainMenuManager.");
+            Debug.LogError("MainMenuManager: GameBridgeManager.Instance is null in Start(). Ensure GameBridgeManager is in the scene and initialized before MainMenuManager.");
         }
     }
 
     private void OnDestroy()
     {
-        if (GameManager.Instance != null)
+        if (GameBridgeManager.Instance != null)
         {
-            GameManager.Instance.OnWalletConnectedEvent -= HandleWalletConnected;
-            GameManager.Instance.OnWalletDisconnectedEvent -= HandleWalletDisconnected;
-            GameManager.Instance.OnWalletConnectionErrorEvent -= HandleWalletError;
+            GameBridgeManager.Instance.OnWalletConnectedEvent -= HandleWalletConnected;
+            GameBridgeManager.Instance.OnWalletDisconnectedEvent -= HandleWalletDisconnected;
+            GameBridgeManager.Instance.OnWalletConnectionErrorEvent -= HandleWalletError;
         }
     }
 
@@ -185,7 +185,7 @@ public class MainMenuManager : MonoBehaviour
         });
     }
 
-    private void HandleWalletDisconnected(string jsonData) // jsonData might be empty or "{}", as per GameManager
+    private void HandleWalletDisconnected(string jsonData) // jsonData might be empty or "{}", as per GameBridgeManager
     {
         Debug.Log("MainMenuManager: HandleWalletDisconnected. JSON Data: " + jsonData);
         _isWalletConnected = false;
@@ -287,3 +287,4 @@ public class MainMenuManager : MonoBehaviour
 // public class ItemSelect : MonoBehaviour { public Sprite[] itemIcons; }
 // Example structure for ToastNotification if not defined:
 // public static class ToastNotification { public static void Show(string message, string type) { Debug.Log($"Toast [{type}]: {message}"); } }
+
