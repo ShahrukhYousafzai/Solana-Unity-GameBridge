@@ -8,16 +8,17 @@ import { Button } from "@/components/ui/button";
 import { ExternalLink, Copy, Send, Trash2 } from "lucide-react";
 import { getAddressExplorerUrl } from "@/utils/explorer";
 import { useToast } from "@/hooks/use-toast";
-import type { SupportedSolanaNetwork } from "@/config"; // Import the network type
+import type { SupportedSolanaNetwork } from "@/config"; 
 
 interface AssetDisplayProps {
   asset: Asset;
   onTransferClick: () => void;
   onBurnClick: () => void;
-  currentNetwork: SupportedSolanaNetwork; // Add currentNetwork prop
+  currentNetwork: SupportedSolanaNetwork;
+  isActionDisabled?: boolean; 
 }
 
-export const AssetDisplay: React.FC<AssetDisplayProps> = ({ asset, onTransferClick, onBurnClick, currentNetwork }) => {
+export const AssetDisplay: React.FC<AssetDisplayProps> = ({ asset, onTransferClick, onBurnClick, currentNetwork, isActionDisabled = false }) => {
   const { toast } = useToast();
 
   const copyToClipboard = (text: string, label: string) => {
@@ -39,7 +40,7 @@ export const AssetDisplay: React.FC<AssetDisplayProps> = ({ asset, onTransferCli
             <CardDescription className="text-base text-muted-foreground">{asset.symbol || assetTypeLabel}</CardDescription>
           </div>
           <a
-            href={getAddressExplorerUrl(asset.id, currentNetwork)} // Use currentNetwork
+            href={getAddressExplorerUrl(asset.id, currentNetwork)}
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-primary hover:underline flex items-center gap-1"
@@ -89,7 +90,7 @@ export const AssetDisplay: React.FC<AssetDisplayProps> = ({ asset, onTransferCli
                  {(asset as Nft | CNft).collection?.id && (
                    <div className="flex items-center gap-1 text-xs">
                     <a
-                        href={getAddressExplorerUrl((asset as Nft | CNft).collection!.id, currentNetwork)} // Use currentNetwork for collection link
+                        href={getAddressExplorerUrl((asset as Nft | CNft).collection!.id, currentNetwork)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-primary hover:underline flex items-center gap-1 truncate"
@@ -120,7 +121,7 @@ export const AssetDisplay: React.FC<AssetDisplayProps> = ({ asset, onTransferCli
                     {asset.rawHeliusAsset.creators.slice(0,3).map(c => (
                         <li key={c.address} className="truncate font-mono" title={c.address}>
                            <a
-                             href={getAddressExplorerUrl(c.address, currentNetwork)} // Use currentNetwork for creator link
+                             href={getAddressExplorerUrl(c.address, currentNetwork)}
                              target="_blank"
                              rel="noopener noreferrer"
                              className="text-primary hover:underline"
@@ -135,10 +136,10 @@ export const AssetDisplay: React.FC<AssetDisplayProps> = ({ asset, onTransferCli
             )}
 
             <div className="flex gap-3 pt-4">
-              <Button onClick={onTransferClick} className="bg-accent text-accent-foreground hover:bg-accent/90 flex-1">
+              <Button onClick={onTransferClick} className="bg-accent text-accent-foreground hover:bg-accent/90 flex-1" disabled={isActionDisabled}>
                 <Send className="mr-2 h-4 w-4" /> Transfer
               </Button>
-              <Button onClick={onBurnClick} variant="destructive" className="flex-1">
+              <Button onClick={onBurnClick} variant="destructive" className="flex-1" disabled={isActionDisabled}>
                 <Trash2 className="mr-2 h-4 w-4" /> Burn
               </Button>
             </div>
@@ -148,3 +149,5 @@ export const AssetDisplay: React.FC<AssetDisplayProps> = ({ asset, onTransferCli
     </Card>
   );
 };
+
+    

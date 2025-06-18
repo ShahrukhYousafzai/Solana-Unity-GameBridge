@@ -45,6 +45,7 @@ export default function HomePage() {
   const [isLoadingAssets, setIsLoadingAssets] = useState(false);
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [isBurnModalOpen, setIsBurnModalOpen] = useState(false);
+  const [isSubmittingTransaction, setIsSubmittingTransaction] = useState(false);
 
   const allFetchedAssets = useMemo(() => [...nfts, ...cnfts, ...tokens], [nfts, cnfts, tokens]);
   const selectedAsset = useMemo(() => allFetchedAssets.find(a => a.id === selectedAssetId) || null, [selectedAssetId, allFetchedAssets]);
@@ -86,11 +87,16 @@ export default function HomePage() {
   }, [connected, publicKey, loadAssets, currentNetwork]);
 
   const handleConfirmTransfer = useCallback(async (recipientAddress: string, amount?: number) => {
+    if (isSubmittingTransaction) {
+      toast({ title: "In Progress", description: "Another transaction is already being processed.", variant: "default" });
+      return;
+    }
     if (!selectedAsset || !publicKey || !sendTransaction) {
       toast({ title: "Error", description: "Wallet not connected or no asset selected.", variant: "destructive" });
       return;
     }
 
+    setIsSubmittingTransaction(true);
     let signature: string | undefined;
     try {
       const recipientPublicKey = new PublicKey(recipientAddress);
@@ -101,6 +107,7 @@ export default function HomePage() {
       } else if (selectedAsset.type === "token") {
         if (typeof amount !== 'number' || amount <= 0) {
           toast({ title: "Error", description: "Invalid amount for token transfer.", variant: "destructive" });
+          setIsSubmittingTransaction(false); // Reset early on validation fail
           return;
         }
         signature = await transferSplToken(connection, wallet, selectedAsset as SplToken, recipientPublicKey, amount);
@@ -118,15 +125,22 @@ export default function HomePage() {
     } catch (error: any) {
       console.error("Transfer failed:", error);
       toast({ title: "Transfer Failed", description: error.message, variant: "destructive" });
+    } finally {
+      setIsSubmittingTransaction(false);
     }
-  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets, currentNetwork, rpcUrl]);
+  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets, currentNetwork, rpcUrl, isSubmittingTransaction]);
 
   const handleConfirmBurn = useCallback(async (amount?: number) => {
+    if (isSubmittingTransaction) {
+      toast({ title: "In Progress", description: "Another transaction is already being processed.", variant: "default" });
+      return;
+    }
     if (!selectedAsset || !publicKey || !sendTransaction) {
       toast({ title: "Error", description: "Wallet not connected or no asset selected.", variant: "destructive" });
       return;
     }
 
+    setIsSubmittingTransaction(true);
     let signature: string | undefined;
     try {
       if (selectedAsset.type === "nft") {
@@ -136,6 +150,7 @@ export default function HomePage() {
       } else if (selectedAsset.type === "token") {
         if (typeof amount !== 'number' || amount <= 0) {
           toast({ title: "Error", description: "Invalid amount for token burn.", variant: "destructive" });
+          setIsSubmittingTransaction(false); // Reset early on validation fail
           return;
         }
         signature = await burnSplToken(connection, wallet, selectedAsset as SplToken, amount);
@@ -153,12 +168,18 @@ export default function HomePage() {
     } catch (error: any) {
       console.error("Burn failed:", error);
       toast({ title: "Burn Failed", description: error.message, variant: "destructive" });
+    } finally {
+      setIsSubmittingTransaction(false);
     }
-  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets, currentNetwork, rpcUrl]);
+  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets, currentNetwork, rpcUrl, isSubmittingTransaction]);
   
   useEffect(() => {
     if (typeof window !== 'undefined') {
       (window as any).transferSelectedAsset = async (recipientAddressString: string, amount?: number) => {
+        if (isSubmittingTransaction) {
+          toast({ title: "In Progress", description: "Another transaction is already being processed.", variant: "default" });
+          return;
+        }
         if (!selectedAsset) {
           toast({ title: "Error", description: "No asset selected.", variant: "destructive" });
           return;
@@ -171,6 +192,10 @@ export default function HomePage() {
         }
       };
       (window as any).burnSelectedAsset = async (amount?: number) => {
+         if (isSubmittingTransaction) {
+          toast({ title: "In Progress", description: "Another transaction is already being processed.", variant: "default" });
+          return;
+        }
          if (!selectedAsset) {
           toast({ title: "Error", description: "No asset selected.", variant: "destructive" });
           return;
@@ -188,7 +213,7 @@ export default function HomePage() {
         delete (window as any).burnSelectedAsset;
       }
     };
-  }, [selectedAsset, handleConfirmTransfer, handleConfirmBurn, toast]);
+  }, [selectedAsset, handleConfirmTransfer, handleConfirmBurn, toast, isSubmittingTransaction]);
 
   const handleSelectAsset = (assetId: string | null) => {
     setSelectedAssetId(assetId);
@@ -246,7 +271,7 @@ export default function HomePage() {
             <section className="space-y-4">
               <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
                 <h2 className="text-2xl font-semibold font-headline">Select Asset ({currentNetwork})</h2>
-                 <Button variant="outline" onClick={loadAssets} disabled={isLoadingAssets}>
+                 <Button variant="outline" onClick={loadAssets} disabled={isLoadingAssets || isSubmittingTransaction}>
                   <RefreshCw className={`mr-2 h-4 w-4 ${isLoadingAssets ? 'animate-spin' : ''}`} />
                   Refresh Assets
                 </Button>
@@ -258,7 +283,7 @@ export default function HomePage() {
                 selectedAssetId={selectedAssetId}
                 onSelectAsset={handleSelectAsset}
                 isLoading={isLoadingAssets}
-                disabled={!publicKey}
+                disabled={!publicKey || isSubmittingTransaction}
               />
             </section>
 
@@ -269,6 +294,7 @@ export default function HomePage() {
                   onTransferClick={() => setIsTransferModalOpen(true)}
                   onBurnClick={() => setIsBurnModalOpen(true)}
                   currentNetwork={currentNetwork}
+                  isActionDisabled={isSubmittingTransaction}
                 />
               </section>
             )}
@@ -320,3 +346,5 @@ export default function HomePage() {
     </div>
   );
 }
+
+    
