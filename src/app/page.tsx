@@ -70,17 +70,20 @@ export default function HomePage() {
       const { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens, heliusWarning } = await fetchAssetsForOwner(publicKey.toBase58(), rpcUrl, connection, wallet);
       
       if (heliusWarning) {
+        const isApiKeyError = heliusWarning.toLowerCase().includes("access forbidden") || heliusWarning.toLowerCase().includes("api key");
         toast({
           title: "API Warning",
           description: heliusWarning,
-          variant: "default", 
+          variant: isApiKeyError ? "destructive" : "default", 
         });
       }
 
       setNfts(fetchedNfts);
       setCnfts(fetchedCnfts);
       setTokens(fetchedTokens);
-      toast({ title: "Asset Scan Complete", description: `Found ${fetchedNfts.length} NFTs, ${fetchedCnfts.length} cNFTs, and ${fetchedTokens.length} Tokens on ${currentNetwork}.` });
+      if (!heliusWarning) { // Only show success toast if no major API warning
+        toast({ title: "Asset Scan Complete", description: `Found ${fetchedNfts.length} NFTs, ${fetchedCnfts.length} cNFTs, and ${fetchedTokens.length} Tokens on ${currentNetwork}.` });
+      }
     } catch (error: any) {
       console.error("Failed to load assets:", error);
       toast({ title: "Error Loading Assets", description: error.message, variant: "destructive" });
@@ -456,3 +459,4 @@ export default function HomePage() {
     </div>
   );
 }
+
