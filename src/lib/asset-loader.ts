@@ -3,7 +3,7 @@ import { Connection, PublicKey, ParsedAccountData } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { walletAdapterIdentity } from "@metaplex-foundation/umi-signer-wallet-adapters";
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
-import { fetchAllDigitalAssetByOwner, mplTokenMetadata, TokenStandard as UmiTokenStandard, DigitalAsset as UmiDigitalAsset, fetchJsonMetadata } from "@metaplex-foundation/mpl-token-metadata";
+import { fetchAllDigitalAssetByOwner, mplTokenMetadata, fetchJsonMetadata, DigitalAsset as UmiDigitalAsset } from "@metaplex-foundation/mpl-token-metadata";
 import type { Umi } from "@metaplex-foundation/umi";
 
 import type { Nft, CNft, SplToken, HeliusAsset } from "@/types/solana";
@@ -43,9 +43,9 @@ const getHeliusAssetsByOwner = async (ownerAddress: string, rpcUrl: string): Pro
     params: {
       ownerAddress,
       page: 1,
-      limit: 1000, // Consider pagination for very large wallets
+      limit: 1000,
       displayOptions: {
-        showFungible: true, // Helius might return some fungibles
+        showFungible: true,
         showUnverifiedCollections: true,
         showCollectionMetadata: true,
       }
@@ -69,7 +69,7 @@ export const getHeliusAssetProof = async (assetId: string, rpcUrl: string): Prom
     return result as HeliusAssetProof;
   } catch (error) {
     console.error(`Error fetching Helius asset proof for ${assetId}:`, error);
-    throw error;
+    throw error; // Re-throw to be caught by the caller in transaction functions
   }
 };
 
@@ -154,11 +154,12 @@ export async function fetchAssetsForOwner(
   rpcUrl: string,
   connection: Connection,
   wallet: WalletContextState
-): Promise<{ nfts: Nft[]; cnfts: CNft[]; tokens: SplToken[] }> {
+): Promise<{ nfts: Nft[]; cnfts: CNft[]; tokens: SplToken[]; heliusWarning?: string }> {
   const ownerPublicKey = new PublicKey(ownerAddressString);
   const nfts: Nft[] = [];
   const cnfts: CNft[] = [];
-  const tokensMap = new Map<string, SplToken>(); // Use Map for easy upsert and deduplication by mint
+  const tokensMap = new Map<string, SplToken>();
+  let heliusWarning: string | undefined = undefined;
 
   // 1. Fetch and process NFTs and cNFTs from Helius
   try {
@@ -170,19 +171,23 @@ export async function fetchAssetsForOwner(
         else if (asset.type === "cnft") cnfts.push(asset);
       }
     }
-  } catch (error) {
-    console.error("Failed to fetch or process Helius assets:", error);
-    // Decide if we want to throw or continue with (potentially) only UMI tokens
+  } catch (error: any) {
+    // Do not console.error here to potentially avoid Next.js dev overlay for handled Helius API key issues.
+    // The error from callHeliusApi is already quite descriptive.
+    if (error.message?.includes("API key") || error.message?.includes("Access forbidden") || error.message?.includes("Unauthorized")) {
+      heliusWarning = "Could not load NFTs and cNFTs: " + error.message;
+    } else {
+      heliusWarning = "Could not load NFTs and cNFTs due to an unexpected error with the Helius RPC: " + error.message;
+    }
+    // NFTs and cNFTs will be empty, but we continue to fetch fungible tokens
   }
 
   // 2. Fetch Fungible Tokens (balances via direct RPC, metadata via UMI)
   const umi = createUmi(rpcUrl).use(mplTokenMetadata());
-  if (wallet.publicKey && wallet.connected) { // UMI identity needed for some operations or if RPC requires it
+  if (wallet.publicKey && wallet.connected) {
     umi.use(walletAdapterIdentity(wallet));
   }
 
-
-  // Get all token accounts for the owner to establish balances
   const tokenAccountsRaw = [];
   try {
     const splTokenAccounts = await connection.getParsedTokenAccountsByOwner(ownerPublicKey, { programId: TOKEN_PROGRAM_ID });
@@ -198,7 +203,7 @@ export async function fetchAssetsForOwner(
   for (const acc of tokenAccountsRaw) {
     try {
       const parsedInfo = (acc.account.data as ParsedAccountData).parsed.info;
-      if (parsedInfo.mint && (parsedInfo.tokenAmount.uiAmount > 0 || parsedInfo.tokenAmount.amount !== "0" || nfts.some(n => n.id === parsedInfo.mint) || cnfts.some(c => c.id === parsedInfo.mint)) ) { // Keep even if balance is 0 for NFTs/cNFTs
+      if (parsedInfo.mint && (parsedInfo.tokenAmount.uiAmount > 0 || parsedInfo.tokenAmount.amount !== "0" || nfts.some(n => n.id === parsedInfo.mint) || cnfts.some(c => c.id === parsedInfo.mint)) ) {
         tokenAccountInfoMap.set(parsedInfo.mint, {
           mint: parsedInfo.mint,
           balance: parsedInfo.tokenAmount.uiAmount,
@@ -212,15 +217,11 @@ export async function fetchAssetsForOwner(
     }
   }
   
-  // Fetch all digital assets metadata using UMI for all known mints from token accounts
   const mintsToFetchMeta = Array.from(tokenAccountInfoMap.keys());
   const umiAssets: UmiDigitalAsset[] = [];
 
   if (mintsToFetchMeta.length > 0) {
     try {
-        // fetchAllDigitalAssetByOwner is good if we don't have mint list, but since we do,
-        // fetching one by one or in batches might be more targeted if fetchAll is too broad or slow.
-        // For now, let's try to get all by owner and then filter.
         const umiOwnerUmiPublicKey = umi.eddsa.createPublicKey(ownerAddressString);
         const allOwnerAssetsUmi = await fetchAllDigitalAssetByOwner(umi, umiOwnerUmiPublicKey);
         
@@ -229,12 +230,12 @@ export async function fetchAssetsForOwner(
                 umiAssets.push(asset);
             }
         }
-
-    } catch (e) {
-        console.warn("UMI fetchAllDigitalAssetByOwner failed, or processing UMI assets failed:", e);
+    } catch (e: any) {
+        // This error will be caught by HomePage's loadAssets if it's critical
+        console.warn("UMI fetchAllDigitalAssetByOwner failed, or processing UMI assets failed:", e.message);
+        // If UMI fails due to the same Helius API key issue, the main catch in HomePage will show it.
     }
   }
-
 
   for (const [mint, accInfo] of tokenAccountInfoMap.entries()) {
     const umiAsset = umiAssets.find(ua => ua.mint.publicKey.toString() === mint);
@@ -242,10 +243,7 @@ export async function fetchAssetsForOwner(
     let symbol = mint.substring(0, 4).toUpperCase();
     let imageUrl: string | undefined = undefined;
     let uri: string | undefined = undefined;
-    // Using a placeholder as rawHeliusAsset is specific to Helius, UMI assets are different.
-    // We might need to adjust the SplToken type if we want to store raw UMI asset data.
     const placeholderRawHeliusAsset = {} as HeliusAsset;
-
 
     if (umiAsset) {
       name = umiAsset.metadata.name || name;
@@ -256,7 +254,6 @@ export async function fetchAssetsForOwner(
       }
     }
     
-    // Add or update the token in the map
     tokensMap.set(mint, {
       id: mint,
       name,
@@ -272,5 +269,5 @@ export async function fetchAssetsForOwner(
     });
   }
 
-  return { nfts, cnfts, tokens: Array.from(tokensMap.values()) };
+  return { nfts, cnfts, tokens: Array.from(tokensMap.values()), heliusWarning };
 }

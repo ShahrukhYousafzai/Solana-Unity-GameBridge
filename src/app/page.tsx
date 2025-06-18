@@ -5,7 +5,7 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import dynamic from "next/dynamic";
-import { fetchAssetsForOwner } from "@/lib/asset-loader"; // Updated import
+import { fetchAssetsForOwner } from "@/lib/asset-loader";
 import type { Asset, Nft, CNft, SplToken } from "@/types/solana";
 import { AssetDropdown } from "@/components/AssetDropdown";
 import { AssetCard } from "@/components/AssetCard";
@@ -51,7 +51,7 @@ export default function HomePage() {
   const selectedAsset = useMemo(() => allFetchedAssets.find(a => a.id === selectedAssetId) || null, [selectedAssetId, allFetchedAssets]);
 
   const loadAssets = useCallback(async () => {
-    if (!publicKey || !rpcUrl || !connection || !wallet) { // Added connection and wallet check for UMI
+    if (!publicKey || !rpcUrl || !connection || !wallet) {
       setNfts([]);
       setCnfts([]);
       setTokens([]);
@@ -61,12 +61,20 @@ export default function HomePage() {
     setIsLoadingAssets(true);
     setSelectedAssetId(null); 
     try {
-      // Pass connection and wallet for UMI
-      const { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens } = await fetchAssetsForOwner(publicKey.toBase58(), rpcUrl, connection, wallet);
+      const { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens, heliusWarning } = await fetchAssetsForOwner(publicKey.toBase58(), rpcUrl, connection, wallet);
+      
+      if (heliusWarning) {
+        toast({
+          title: "Helius API Warning",
+          description: heliusWarning,
+          variant: "destructive", // Can be changed to a "warning" variant if one exists and is preferred
+        });
+      }
+
       setNfts(fetchedNfts);
       setCnfts(fetchedCnfts);
       setTokens(fetchedTokens);
-      toast({ title: "Assets Loaded", description: `Found ${fetchedNfts.length} NFTs, ${fetchedCnfts.length} cNFTs, ${fetchedTokens.length} Tokens on ${currentNetwork}.` });
+      toast({ title: "Asset Scan Complete", description: `Found ${fetchedNfts.length} NFTs, ${fetchedCnfts.length} cNFTs, and ${fetchedTokens.length} Tokens on ${currentNetwork}.` });
     } catch (error: any) {
       console.error("Failed to load assets:", error);
       toast({ title: "Error Loading Assets", description: error.message, variant: "destructive" });
@@ -74,7 +82,7 @@ export default function HomePage() {
     } finally {
       setIsLoadingAssets(false);
     }
-  }, [publicKey, rpcUrl, connection, wallet, toast, currentNetwork]); // Added connection, wallet to dependencies
+  }, [publicKey, rpcUrl, connection, wallet, toast, currentNetwork]);
 
   useEffect(() => {
     if (connected && publicKey) {
