@@ -45,7 +45,7 @@ declare global {
     ) => Promise<UnityInstance>;
     unityInstance?: UnityInstance;
     unityBridge?: any;
-    UnityGame?: { // This is typically exposed by the Unity WebGL template itself for SendMessage to work
+    UnityGame?: { 
       SendMessage: (gameObjectName: string, methodName: string, message: string | number | object) => void;
     };
   }
@@ -75,7 +75,7 @@ export default function HomePage() {
   const sendToUnity = useCallback((gameObjectName: string, methodName: string, message: any) => {
     const replacer = (key: string, value: any) => {
       if (typeof value === 'bigint') {
-        return value.toString(); // Convert BigInt to string
+        return value.toString(); 
       }
       return value;
     };
@@ -85,7 +85,6 @@ export default function HomePage() {
       console.log(`[UnityBridge] Sending via unityInstance: ${gameObjectName}.${methodName}`, message);
       unityInstance.SendMessage(gameObjectName, methodName, msgStr);
     }
-    // Fallback if SendMessage is directly on window.UnityGame (older templates or custom setups)
     else if (window.UnityGame && typeof window.UnityGame.SendMessage === 'function') {
       console.log(`[UnityBridge] Sending via window.UnityGame: ${gameObjectName}.${methodName}`, message);
       window.UnityGame.SendMessage(gameObjectName, methodName, msgStr);
@@ -96,7 +95,6 @@ export default function HomePage() {
 
 
   useEffect(() => {
-    // Ensure this runs only on the client
     if (typeof window !== 'undefined' && canvasRef.current) {
       if (typeof window.createUnityInstance === 'function') {
         // IMPORTANT: These paths MUST match your Unity WebGL build output in /public/Build/
@@ -116,9 +114,9 @@ export default function HomePage() {
           setUnityLoadingProgress(progress * 100);
         }).then((instance) => {
           setUnityInstance(instance);
-          window.unityInstance = instance; // Make it globally accessible if needed
+          window.unityInstance = instance; 
           setIsUnityLoading(false);
-          sendToUnity("GameManager", "OnUnityReady", {}); // Notify Unity game that JS side is ready
+          sendToUnity("GameManager", "OnUnityReady", {}); 
         }).catch((error) => {
           console.error("Error creating Unity instance:", error);
           setIsUnityLoading(false);
@@ -127,18 +125,17 @@ export default function HomePage() {
         });
       } else {
         console.warn("window.createUnityInstance is not available. Check if UnityLoader.js (or your game's loader script, e.g., YourGameName.loader.js) is correctly loaded via <Script> in layout.tsx, and that your Unity build files are in /public/Build/ and named according to UNITY_GAME_BUILD_BASE_NAME.");
-        // Fallback if createUnityInstance isn't found after a delay, indicating loader script issue.
         const timer = setTimeout(() => {
-          if (isUnityLoading) { // Check again if still loading
-               setIsUnityLoading(false); // Ensure loading screen hides
+          if (isUnityLoading) { 
+               setIsUnityLoading(false); 
                toast({ title: "Game Loader Error", description: "Could not initialize Unity game loader. Check browser console and ensure Unity build files (matching UNITY_GAME_BUILD_BASE_NAME) and the loader script (e.g., MyGame.loader.js) are present and correctly pathed.", variant: "destructive", duration: 15000 });
           }
-        }, 5000); // Wait 5s before showing this general loader error
-        return () => clearTimeout(timer); // Cleanup timer
+        }, 5000); 
+        return () => clearTimeout(timer); 
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Empty dependency array: runs once on mount.
+  }, []); 
 
 
   const fetchSolBalance = useCallback(async () => {

@@ -22,15 +22,14 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning className="dark">
       <head>
         <meta httpEquiv="Content-Security-Policy" content="upgrade-insecure-requests" />
+        {/* More specific viewport for games, preventing scaling and ensuring device dimensions are used */}
+        <meta
+          name="viewport"
+          content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=no"
+        />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-        {/* 
-          This script tag loads the Unity WebGL loader.
-          It now dynamically uses UNITY_GAME_BUILD_BASE_NAME.
-          Example: If UNITY_GAME_BUILD_BASE_NAME is "GearHeadRacing", this will load "/Build/GearHeadRacing.loader.js".
-          Ensure this loader script name matches what your Unity build generates when "Name Files As Hashes" is disabled.
-        */}
         <Script src={`/Build/${UNITY_GAME_BUILD_BASE_NAME}.loader.js`} strategy="beforeInteractive" />
       </head>
       <body className="font-body antialiased bg-background text-foreground overflow-hidden">
