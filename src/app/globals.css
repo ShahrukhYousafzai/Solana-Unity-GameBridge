@@ -50,12 +50,6 @@
     --sidebar-ring: 276 80% 70%; /* Match main ring */
   }
 
-  /* 
-    The .dark class is applied to the html tag in layout.tsx by default.
-    If you want to support light/dark theme switching based on system preference or a toggle,
-    you would remove the .dark class from the html tag and manage it dynamically.
-    For now, this forces dark theme as the primary experience.
-  */
 }
 
 @layer base {
@@ -78,11 +72,7 @@
 
   /* Styles for the Unity Canvas and its container */
   #unity-canvas {
-    width: 100%;
-    height: 100%;
-    display: block; /* Remove any extra space below canvas */
+    /* Rely on Tailwind classes (w-full, h-full, block) applied directly to the element for sizing and display */
     background: transparent !important; /* Ensure canvas background is transparent if game doesn't fill */
   }
 }
-
-    
