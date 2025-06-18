@@ -3,8 +3,7 @@ import type { Connection } from "@solana/web3.js";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import type { Nft, CNft, SplToken, HeliusAsset, Asset } from "@/types/solana";
 import type { HeliusAssetProof } from "./helius"; // Assuming HeliusAssetProof is still relevant and defined in a separate helius.ts or moved here.
-// If HeliusAssetProof is defined in this file, the import is not needed.
-// For now, let's assume it's still needed for fetchHeliusAssetProof.
+
 
 // Helper to call Helius API and handle common error structure
 const callHeliusApi = async (rpcUrl: string, body: object): Promise<any> => {
@@ -31,26 +30,26 @@ const searchHeliusAssets = async (ownerAddress: string, rpcUrl: string): Promise
   try {
     const result = await callHeliusApi(rpcUrl, {
       jsonrpc: "2.0",
-      id: "solblaze-searchAssets", // Consistent ID for this method
+      id: "solblaze-searchAssets-all", 
       method: "searchAssets",
       params: {
         ownerAddress,
-        page: 1, // Consider pagination if >1000 assets expected
+        page: 1, 
         limit: 1000,
-        tokenType: "all",
+        tokenType: "all", // Fetch all types: fungible, non-fungible, compressed NFTs
         displayOptions: {
-          showFungible: true,
-          showNativeBalance: false, // SOL balance is not part of this asset list
-          showUnverifiedCollections: true, // To see all possible collection relations
-          showCollectionMetadata: true, // To get names for collections
+          showFungible: true, 
+          showNativeBalance: false, 
+          showUnverifiedCollections: true, 
+          showCollectionMetadata: true, 
         }
       },
     });
     console.log(`[AssetLoader] searchAssets returned ${result.items?.length || 0} total items.`);
     return result.items || [];
   } catch (error) {
-    console.error("[AssetLoader] Error calling Helius searchAssets:", error); // Log for server/build visibility
-    throw error; // Re-throw for fetchAssetsForOwner to catch and set heliusWarning
+    console.error("[AssetLoader] Error calling Helius searchAssets:", error);
+    throw error; 
   }
 };
 
@@ -66,6 +65,7 @@ const normalizeHeliusAssetToAppAsset = (heliusAsset: HeliusAsset): Asset | null 
   if (!imageUrl) {
     imageUrl = heliusAsset.content?.files?.find(f => f.cdn_uri && f.mime?.startsWith("image/"))?.cdn_uri;
   }
+  
   const collectionData = heliusAsset.grouping?.find(g => g.group_key === "collection");
   const collection = collectionData ? { name: collectionData.collection_metadata?.name || collectionData.group_value, id: collectionData.group_value } : undefined;
   const isVerifiedCollection = collectionData?.verified === true || heliusAsset.creators?.some(c => c.verified && collectionData?.group_value === c.address);
@@ -93,7 +93,7 @@ const normalizeHeliusAssetToAppAsset = (heliusAsset: HeliusAsset): Asset | null 
   }
 
   // Standard NFTs
-  if (heliusAsset.interface === "V1_NFT" || heliusAsset.interface === "ProgrammableNFT" || heliusAsset.interface === "V1_PRINT" || heliusAsset.interface === "IdentityNFT") {
+  if (heliusAsset.interface === "V1_NFT" || heliusAsset.interface === "ProgrammableNFT" || heliusAsset.interface === "V1_PRINT" || heliusAsset.interface === "IdentityNFT" || heliusAsset.interface === "ExecutableNFT" || heliusAsset.interface === "Inscription") {
     const nftName = commonName || `NFT ${heliusAsset.id.substring(0, 6)}...`;
     return {
       id: heliusAsset.id,
@@ -120,18 +120,22 @@ const normalizeHeliusAssetToAppAsset = (heliusAsset: HeliusAsset): Asset | null 
     let rawBalanceBigInt: bigint;
     let tokenAccount: string | undefined = heliusAsset.ownership.token_account;
 
-    if (tokenInfo) { // Prefer Helius's top-level token_info if available
+    if (tokenInfo) { 
       decimals = tokenInfo.decimals;
-      balance = tokenInfo.balance; // Helius provides this decimal-adjusted
-      rawBalanceBigInt = tokenInfo.raw_token_amount ? BigInt(tokenInfo.raw_token_amount) : BigInt(Math.round(balance * (10 ** decimals)));
-      if (!tokenAccount && tokenInfo.token_program) tokenAccount = heliusAsset.ownership.owner; // Fallback for ATA if not directly on ownership.token_account for some reason
-    } else if (splTokenInfo) { // Fallback to spl_token_info
+      balance = tokenInfo.balance; 
+      if (typeof tokenInfo.raw_token_amount === 'string' && tokenInfo.raw_token_amount.length > 0) {
+        rawBalanceBigInt = BigInt(tokenInfo.raw_token_amount);
+      } else {
+        rawBalanceBigInt = BigInt(Math.round(balance * (10 ** decimals)));
+      }
+      if (!tokenAccount && tokenInfo.token_program) tokenAccount = heliusAsset.ownership.owner; 
+    } else if (splTokenInfo) { 
       decimals = splTokenInfo.decimals;
-      rawBalanceBigInt = BigInt(splTokenInfo.balance); // spl_token_info.balance is usually raw
+      rawBalanceBigInt = BigInt(splTokenInfo.balance); 
       balance = Number(rawBalanceBigInt) / (10 ** decimals);
       tokenAccount = splTokenInfo.token_account || heliusAsset.ownership.owner;
     } else {
-      console.warn(`[AssetLoader] Asset ${heliusAsset.id} looks like a token but lacks token_info and spl_token_info. Skipping.`);
+      console.warn(`[AssetLoader] Asset ${heliusAsset.id} (Interface: ${heliusAsset.interface}) looks like a token but lacks token_info and spl_token_info. Skipping.`);
       return null;
     }
 
@@ -141,7 +145,8 @@ const normalizeHeliusAssetToAppAsset = (heliusAsset: HeliusAsset): Asset | null 
     }
     
     const tokenName = commonName || tokenInfo?.symbol || splTokenInfo?.mint?.substring(0,6) || `Token ${heliusAsset.id.substring(0, 6)}...`;
-    const tokenSymbol = tokenInfo?.symbol || commonSymbol || heliusAsset.id.substring(0, 4).toUpperCase();
+    const tokenSymbolFromMeta = commonSymbol || tokenInfo?.symbol;
+    const tokenSymbol = tokenSymbolFromMeta ? tokenSymbolFromMeta : heliusAsset.id.substring(0, 4).toUpperCase();
     
     return {
       id: heliusAsset.id, // Mint address
@@ -163,9 +168,6 @@ const normalizeHeliusAssetToAppAsset = (heliusAsset: HeliusAsset): Asset | null 
 };
 
 
-// Re-exporting fetchHeliusAssetProof if it's defined in helius.ts and needed by transactions.ts
-// If it's moved here, then just define it.
-// Assuming it's defined in a way that's still needed.
 export const fetchHeliusAssetProof = async (assetId: string, rpcUrl: string): Promise<HeliusAssetProof | null> => {
   try {
     const result = await callHeliusApi(rpcUrl, {
@@ -189,8 +191,8 @@ export const fetchHeliusAssetProof = async (assetId: string, rpcUrl: string): Pr
 export async function fetchAssetsForOwner(
   ownerAddressString: string,
   rpcUrl: string,
-  connection: Connection, 
-  wallet: WalletContextState 
+  connection: Connection, // Kept for potential direct UMI/RPC calls if needed later, not used currently
+  wallet: WalletContextState // Kept for potential UMI identity if needed later
 ): Promise<{ nfts: Nft[]; cnfts: CNft[]; tokens: SplToken[]; heliusWarning?: string }> {
   const nfts: Nft[] = [];
   const cnfts: CNft[] = [];
@@ -211,7 +213,6 @@ export async function fetchAssetsForOwner(
         } else if (appAsset.type === "cnft") {
           cnfts.push(appAsset);
         } else if (appAsset.type === "token") {
-          // Double check for zero balance tokens again, though normalize should handle it
           if (appAsset.rawBalance > BigInt(0)) {
             tokens.push(appAsset);
           } else {
@@ -221,13 +222,13 @@ export async function fetchAssetsForOwner(
       }
     }
   } catch (error: any) {
-    // Do not console.error here if we are setting heliusWarning, 
-    // to prevent Next.js error overlay for this specific handled error.
-    heliusWarning = "Failed to load assets from Helius: " + error.message;
+    if (error.message && error.message.startsWith("Helius API Error:")) {
+      heliusWarning = error.message;
+    } else {
+      heliusWarning = "Failed to load assets from Helius: " + (error.message || "Unknown error");
+    }
   }
 
   console.log(`[AssetLoader] Asset fetch complete. NFTs: ${nfts.length}, cNFTs: ${cnfts.length}, Tokens: ${tokens.length}. Helius Warning: ${heliusWarning || 'None'}`);
   return { nfts, cnfts, tokens, heliusWarning };
 }
-
-    
