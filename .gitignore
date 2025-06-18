@@ -10,8 +10,9 @@
 !.yarn/releases
 !.yarn/versions
 
-/public
-!/public/build
+# Ignore everything inside Public/Build
+/Public/Build/*
+
 
 # testing
 /coverage
