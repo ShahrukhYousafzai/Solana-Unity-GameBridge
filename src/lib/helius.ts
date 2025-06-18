@@ -130,7 +130,13 @@ const normalizeHeliusAsset = (heliusAsset: HeliusAsset): Asset | null => {
   if (heliusAsset.interface === "FungibleAsset" || heliusAsset.interface === "FungibleToken") {
     if (!heliusAsset.token_info) return null; 
     
-    const rawBalanceBigInt = BigInt(Math.round(heliusAsset.token_info.balance * (10 ** heliusAsset.token_info.decimals)));
+    let rawBalanceBigInt: bigint;
+    if (heliusAsset.token_info.raw_token_amount && /^\d+$/.test(heliusAsset.token_info.raw_token_amount)) {
+      rawBalanceBigInt = BigInt(heliusAsset.token_info.raw_token_amount);
+    } else {
+      // Fallback if raw_token_amount is not available or not a valid integer string
+      rawBalanceBigInt = BigInt(Math.round(heliusAsset.token_info.balance * (10 ** heliusAsset.token_info.decimals)));
+    }
 
     return {
       id: heliusAsset.id, 
@@ -140,17 +146,19 @@ const normalizeHeliusAsset = (heliusAsset: HeliusAsset): Asset | null => {
       type: "token",
       uri: heliusAsset.content?.json_uri,
       decimals: heliusAsset.token_info.decimals,
-      balance: heliusAsset.token_info.balance, 
+      balance: heliusAsset.token_info.balance, // Helius provides this decimal-adjusted
       rawBalance: rawBalanceBigInt,
       tokenAddress: heliusAsset.ownership.token_account || heliusAsset.spl_token_info?.token_account,
       rawHeliusAsset: heliusAsset,
     } as SplToken;
   }
   
+   // Handling for older or less detailed SPL token representations if needed
    if (heliusAsset.spl_token_info && heliusAsset.id) { 
     const decimals = heliusAsset.spl_token_info.decimals;
+    // spl_token_info.balance from Helius is typically the raw, non-adjusted string.
     const rawBalance = BigInt(heliusAsset.spl_token_info.balance);
-    const balance = Number(rawBalance) / (10 ** decimals);
+    const balance = Number(rawBalance) / (10 ** decimals); // Calculate UI balance
     return {
       id: heliusAsset.id, 
       name: name !== "Unknown Asset" ? name : heliusAsset.id, 
@@ -211,7 +219,7 @@ export const fetchAssetsForOwner = async (
       } else if (asset.type === "cnft") {
         cnfts.push(asset);
       } else if (asset.type === "token") {
-        if (asset.balance > 0) {
+        if (asset.balance > 0 || asset.rawBalance > 0n) { // Ensure tokens with any balance are included
            tokens.push(asset);
         }
       }
@@ -220,3 +228,4 @@ export const fetchAssetsForOwner = async (
   return { nfts, cnfts, tokens };
 };
 
+    

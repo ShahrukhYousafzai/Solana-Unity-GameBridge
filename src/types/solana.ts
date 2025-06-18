@@ -1,3 +1,4 @@
+
 export interface BaseAsset {
   id: string; // Mint address for NFTs/Tokens, ID for cNFTs
   name: string;
@@ -21,7 +22,7 @@ export interface CNft extends BaseAsset {
   compression: {
     compressed: boolean;
     tree: string;
-    leafId: number; // Corrected from leaf_id to camelCase
+    leafId: number; 
   };
   collection?: { name: string, id: string }; // Collection mint address as id
   creators?: { address: string, verified: boolean, share: number }[];
@@ -98,7 +99,7 @@ export interface HeliusAsset {
   };
   mutable: boolean;
   burnt: boolean;
-  token_info?: { // For FungibleAsset / FungibleToken
+  token_info?: { 
     symbol?: string;
     balance: number; // This is already adjusted for decimals by Helius
     decimals: number;
@@ -108,9 +109,8 @@ export interface HeliusAsset {
       total_price: number;
       currency: string;
     };
-    raw_balance_helius?: string; // If Helius provides raw balance as string
+    raw_token_amount?: string; // Raw token amount (not factoring in decimals)
   };
-  // spl_token_info used if interface is just "Token" (older or less detailed)
   spl_token_info?: {
     token_account: string;
     balance: string; 
@@ -118,3 +118,5 @@ export interface HeliusAsset {
     mint: string;
   }
 }
+
+    
