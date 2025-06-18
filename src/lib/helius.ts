@@ -77,26 +77,26 @@ export const getHeliusAssetProof = async (assetId: string, rpcUrl: string): Prom
 
 
 const normalizeHeliusAsset = (heliusAsset: HeliusAsset): Asset | null => {
-  const name = heliusAsset.content?.metadata?.name || "Unknown Asset";
-  const symbol = heliusAsset.content?.metadata?.symbol || "";
+  const commonName = heliusAsset.content?.metadata?.name;
+  const commonSymbol = heliusAsset.content?.metadata?.symbol;
+  
   let imageUrl = heliusAsset.content?.links?.image || heliusAsset.content?.files?.find(f => f.uri && f.mime?.startsWith("image/"))?.uri;
-
   if (!imageUrl) {
     imageUrl = heliusAsset.content?.files?.find(f => f.cdn_uri && f.mime?.startsWith("image/"))?.cdn_uri;
   }
 
   const collectionData = heliusAsset.grouping?.find(g => g.group_key === "collection");
   const collection = collectionData ? { name: collectionData.collection_metadata?.name || collectionData.group_value, id: collectionData.group_value } : undefined;
-
   const isVerifiedCollection = collectionData?.verified === true || heliusAsset.creators?.some(c => c.verified && collectionData?.group_value);
 
-
   if (heliusAsset.interface === "V1_NFT" || heliusAsset.interface === "ProgrammableNFT" || heliusAsset.interface === "IdentityNFT" || heliusAsset.interface === "V1_PRINT") {
+    const nftName = commonName || "Unknown NFT";
+    const nftSymbol = commonSymbol || "";
     if (heliusAsset.compression?.compressed) {
       return {
         id: heliusAsset.id, 
-        name,
-        symbol,
+        name: nftName,
+        symbol: nftSymbol,
         imageUrl,
         type: "cnft",
         uri: heliusAsset.content?.json_uri,
@@ -113,8 +113,8 @@ const normalizeHeliusAsset = (heliusAsset: HeliusAsset): Asset | null => {
     } else {
       return {
         id: heliusAsset.id,
-        name,
-        symbol,
+        name: nftName,
+        symbol: nftSymbol,
         imageUrl,
         type: "nft",
         uri: heliusAsset.content?.json_uri,
@@ -128,25 +128,34 @@ const normalizeHeliusAsset = (heliusAsset: HeliusAsset): Asset | null => {
   }
 
   if (heliusAsset.interface === "FungibleAsset" || heliusAsset.interface === "FungibleToken") {
-    if (!heliusAsset.token_info) return null; 
+    if (!heliusAsset.token_info) {
+        console.warn(`Asset ${heliusAsset.id} (Interface: ${heliusAsset.interface}) is missing token_info. Skipping.`);
+        return null;
+    }
     
+    const ti = heliusAsset.token_info;
+    const decimals = typeof ti.decimals === 'number' ? ti.decimals : 0;
+    const uiBalance = typeof ti.balance === 'number' ? ti.balance : 0;
+
     let rawBalanceBigInt: bigint;
-    if (heliusAsset.token_info.raw_token_amount && /^\d+$/.test(heliusAsset.token_info.raw_token_amount)) {
-      rawBalanceBigInt = BigInt(heliusAsset.token_info.raw_token_amount);
+    if (ti.raw_token_amount && /^\d+$/.test(ti.raw_token_amount)) {
+      rawBalanceBigInt = BigInt(ti.raw_token_amount);
     } else {
-      // Fallback if raw_token_amount is not available or not a valid integer string
-      rawBalanceBigInt = BigInt(Math.round(heliusAsset.token_info.balance * (10 ** heliusAsset.token_info.decimals)));
+      rawBalanceBigInt = BigInt(Math.round(uiBalance * (10 ** decimals)));
     }
 
+    const tokenName = commonName || `Token ${heliusAsset.id.substring(0, 6)}...`;
+    const tokenSymbol = ti.symbol || commonSymbol || heliusAsset.id.substring(0, 4).toUpperCase();
+    
     return {
       id: heliusAsset.id, 
-      name,
-      symbol: heliusAsset.token_info.symbol || symbol,
+      name: tokenName,
+      symbol: tokenSymbol,
       imageUrl, 
       type: "token",
       uri: heliusAsset.content?.json_uri,
-      decimals: heliusAsset.token_info.decimals,
-      balance: heliusAsset.token_info.balance, // Helius provides this decimal-adjusted
+      decimals,
+      balance: uiBalance, 
       rawBalance: rawBalanceBigInt,
       tokenAddress: heliusAsset.ownership.token_account || heliusAsset.spl_token_info?.token_account,
       rawHeliusAsset: heliusAsset,
@@ -155,21 +164,25 @@ const normalizeHeliusAsset = (heliusAsset: HeliusAsset): Asset | null => {
   
    // Handling for older or less detailed SPL token representations if needed
    if (heliusAsset.spl_token_info && heliusAsset.id) { 
-    const decimals = heliusAsset.spl_token_info.decimals;
-    // spl_token_info.balance from Helius is typically the raw, non-adjusted string.
-    const rawBalance = BigInt(heliusAsset.spl_token_info.balance);
+    const sti = heliusAsset.spl_token_info;
+    const decimals = typeof sti.decimals === 'number' ? sti.decimals : 0;
+    const rawBalance = BigInt(sti.balance); // spl_token_info.balance from Helius is typically the raw, non-adjusted string.
     const balance = Number(rawBalance) / (10 ** decimals); // Calculate UI balance
+
+    const tokenName = commonName || `Token ${heliusAsset.id.substring(0, 6)}...`;
+    const tokenSymbol = commonSymbol || heliusAsset.id.substring(0, 4).toUpperCase();
+
     return {
       id: heliusAsset.id, 
-      name: name !== "Unknown Asset" ? name : heliusAsset.id, 
-      symbol: symbol || heliusAsset.id.substring(0,4), 
+      name: tokenName, 
+      symbol: tokenSymbol, 
       imageUrl,
       type: "token",
       uri: heliusAsset.content?.json_uri,
       decimals,
       balance,
       rawBalance,
-      tokenAddress: heliusAsset.spl_token_info.token_account,
+      tokenAddress: sti.token_account,
       rawHeliusAsset: heliusAsset,
     } as SplToken;
   }
