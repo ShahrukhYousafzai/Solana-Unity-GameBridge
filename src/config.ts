@@ -1,7 +1,5 @@
 
 import { WalletAdapterNetwork } from "@solana/wallet-adapter-base";
-import type { SupportedSolanaNetwork as SupportedSolanaNetworkType } from "@solana/wallet-adapter-base";
-
 
 export const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY; // Defaults to undefined if not set
 
@@ -26,5 +24,3 @@ export const getRpcUrl = (network: SupportedSolanaNetwork, apiKey: string | unde
   console.warn(`Unsupported network ${network} with Helius API key. Falling back to public Mainnet RPC.`);
   return "https://api.mainnet-beta.solana.com";
 };
-
-
