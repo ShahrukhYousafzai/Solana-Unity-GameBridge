@@ -1,9 +1,9 @@
 
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { PublicKey } from "@solana/web3.js";
+import { PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import dynamic from "next/dynamic";
 import { fetchAssetsForOwner } from "@/lib/asset-loader";
 import type { Asset, Nft, CNft, SplToken } from "@/types/solana";
@@ -20,33 +20,24 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { getTransactionExplorerUrl, getAddressExplorerUrl } from "@/utils/explorer";
-import { transferNft, transferSplToken, burnNft, burnSplToken, transferCNft, burnCNft, depositSplToken, initiateWithdrawalRequest } from "@/lib/solana/transactions";
-import type { WithdrawalResponse } from "@/lib/solana/transactions";
+import {
+  transferNft, transferSplToken, burnNft, burnSplToken,
+  transferCNft, burnCNft, depositSplToken, initiateWithdrawalRequest,
+  transferSol, depositSol, burnSol, type WithdrawalResponse
+} from "@/lib/solana/transactions";
 import { RefreshCw, Package, PackageSearch, CoinsIcon } from "lucide-react";
 import { useNetwork } from "@/contexts/NetworkContext";
 import type { SupportedSolanaNetwork } from "@/config";
 import { NetworkSwitcher } from "@/components/NetworkSwitcher";
-import { CUSTODIAL_WALLET_ADDRESS } from "@/config";
+import { CUSTODIAL_WALLET_ADDRESS, SOL_DECIMALS } from "@/config";
 
 const ConnectWalletButton = dynamic(
   () => import("@/components/ConnectWalletButton").then((mod) => mod.ConnectWalletButton),
-  { 
+  {
     ssr: false,
-    loading: () => <Skeleton className="h-10 w-32 rounded-md" /> 
+    loading: () => <Skeleton className="h-10 w-32 rounded-md" />
   }
 );
-
-// Placeholder for Unity communication
-// The actual implementation will depend on your Unity Web Browser plugin
-const sendToUnity = (objectName: string, methodName: string, message: any) => {
-  if (typeof window !== 'undefined' && (window as any).UnityGame?.SendMessage) {
-    console.log(`[UnityBridge] Sending to Unity: ${objectName}.${methodName}`, message);
-    (window as any).UnityGame.SendMessage(objectName, methodName, JSON.stringify(message));
-  } else {
-    console.warn(`[UnityBridge] UnityGame.SendMessage not found. Message for ${objectName}.${methodName} not sent.`, message);
-  }
-};
-
 
 export default function HomePage() {
   const { connection } = useConnection();
@@ -54,10 +45,12 @@ export default function HomePage() {
   const { publicKey, sendTransaction, connected, connect: connectWalletAdapter, disconnect: disconnectWalletAdapter, select } = wallet;
   const { toast } = useToast();
   const { currentNetwork, setCurrentNetwork, rpcUrl } = useNetwork();
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const [nfts, setNfts] = useState<Nft[]>([]);
   const [cnfts, setCnfts] = useState<CNft[]>([]);
   const [tokens, setTokens] = useState<SplToken[]>([]);
+  const [solBalance, setSolBalance] = useState<number>(0);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [isLoadingAssets, setIsLoadingAssets] = useState(false);
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
@@ -69,29 +62,61 @@ export default function HomePage() {
   const allFetchedAssets = useMemo(() => [...nfts, ...cnfts, ...tokens], [nfts, cnfts, tokens]);
   const selectedAsset = useMemo(() => allFetchedAssets.find(a => a.id === selectedAssetId) || null, [selectedAssetId, allFetchedAssets]);
 
+  const sendToUnity = useCallback((objectName: string, methodName: string, message: any) => {
+    if (iframeRef.current && iframeRef.current.contentWindow && (iframeRef.current.contentWindow as any).UnityGame?.SendMessage) {
+      console.log(`[UnityBridge] Sending to Unity (iframe): ${objectName}.${methodName}`, message);
+      (iframeRef.current.contentWindow as any).UnityGame.SendMessage(objectName, methodName, JSON.stringify(message));
+    } else {
+      console.warn(`[UnityBridge] UnityGame.SendMessage not found in iframe or iframe not ready. Message for ${objectName}.${methodName} not sent.`, message);
+    }
+  }, [iframeRef]);
+
+
+  const fetchSolBalance = useCallback(async () => {
+    if (publicKey && connection) {
+      try {
+        const balance = await connection.getBalance(publicKey);
+        const sol = balance / LAMPORTS_PER_SOL;
+        setSolBalance(sol);
+        sendToUnity("SolBlazeManager", "OnSolBalanceUpdated", { solBalance: sol });
+        return sol;
+      } catch (error: any) {
+        console.error("Failed to fetch SOL balance:", error);
+        toast({ title: "Error Fetching SOL Balance", description: error.message, variant: "destructive" });
+        sendToUnity("SolBlazeManager", "OnSolBalanceUpdateFailed", { error: error.message });
+        return 0;
+      }
+    }
+    return 0;
+  }, [publicKey, connection, sendToUnity, toast]);
+
   const loadAssets = useCallback(async () => {
     if (!publicKey || !rpcUrl || !connection || !wallet) {
       setNfts([]);
       setCnfts([]);
       setTokens([]);
+      setSolBalance(0);
       setSelectedAssetId(null);
-      sendToUnity("SolBlazeManager", "OnAssetsLoaded", { nfts: [], cnfts: [], tokens: [] });
+      sendToUnity("SolBlazeManager", "OnAssetsLoaded", { nfts: [], cnfts: [], tokens: [], solBalance: 0 });
       return;
     }
     setIsLoadingAssets(true);
     sendToUnity("SolBlazeManager", "OnAssetsLoadingStateChanged", { isLoading: true });
-    setSelectedAssetId(null); 
+    setSelectedAssetId(null);
     sendToUnity("SolBlazeManager", "OnAssetSelected", { asset: null });
     try {
-      const { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens, heliusWarning } = await fetchAssetsForOwner(publicKey.toBase58(), rpcUrl, connection, wallet);
-      
+      const [fetchedSolBalance, { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens, heliusWarning }] = await Promise.all([
+        fetchSolBalance(),
+        fetchAssetsForOwner(publicKey.toBase58(), rpcUrl, connection, wallet)
+      ]);
+
       if (heliusWarning) {
         const isApiKeyError = heliusWarning.toLowerCase().includes("access forbidden") || heliusWarning.toLowerCase().includes("api key");
         const toastVariant = isApiKeyError ? "destructive" : "default";
         toast({
           title: "API Warning",
           description: heliusWarning,
-          variant: toastVariant, 
+          variant: toastVariant,
         });
         sendToUnity("SolBlazeManager", "OnHeliusWarning", { warning: heliusWarning, isError: isApiKeyError });
       }
@@ -99,22 +124,24 @@ export default function HomePage() {
       setNfts(fetchedNfts);
       setCnfts(fetchedCnfts);
       setTokens(fetchedTokens);
-      sendToUnity("SolBlazeManager", "OnAssetsLoaded", { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens });
+      // SOL balance is set by fetchSolBalance and sent to Unity there
+
+      sendToUnity("SolBlazeManager", "OnAssetsLoaded", { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens, solBalance: fetchedSolBalance });
 
       if (!heliusWarning) {
-        toast({ title: "Asset Scan Complete", description: `Found ${fetchedNfts.length} NFTs, ${fetchedCnfts.length} cNFTs, and ${fetchedTokens.length} Tokens on ${currentNetwork}.` });
+        toast({ title: "Asset Scan Complete", description: `Found ${fetchedNfts.length} NFTs, ${fetchedCnfts.length} cNFTs, ${fetchedTokens.length} Tokens, and ${fetchedSolBalance.toFixed(SOL_DECIMALS)} SOL on ${currentNetwork}.` });
       }
     } catch (error: any) {
       console.error("Failed to load assets:", error);
       toast({ title: "Error Loading Assets", description: error.message, variant: "destructive" });
       sendToUnity("SolBlazeManager", "OnAssetsLoadFailed", { error: error.message });
-      setNfts([]); setCnfts([]); setTokens([]);
-      sendToUnity("SolBlazeManager", "OnAssetsLoaded", { nfts: [], cnfts: [], tokens: [] });
+      setNfts([]); setCnfts([]); setTokens([]); setSolBalance(0);
+      sendToUnity("SolBlazeManager", "OnAssetsLoaded", { nfts: [], cnfts: [], tokens: [], solBalance: 0 });
     } finally {
       setIsLoadingAssets(false);
       sendToUnity("SolBlazeManager", "OnAssetsLoadingStateChanged", { isLoading: false });
     }
-  }, [publicKey, rpcUrl, connection, wallet, toast, currentNetwork]);
+  }, [publicKey, rpcUrl, connection, wallet, toast, currentNetwork, sendToUnity, fetchSolBalance]);
 
   useEffect(() => {
     if (connected && publicKey) {
@@ -125,27 +152,28 @@ export default function HomePage() {
       setNfts([]);
       setCnfts([]);
       setTokens([]);
+      setSolBalance(0);
       setSelectedAssetId(null);
     }
-  }, [connected, publicKey, loadAssets, currentNetwork]);
+  }, [connected, publicKey, loadAssets, currentNetwork, sendToUnity]);
 
 
   const handleConfirmTransfer = useCallback(async (recipientAddress: string, amount?: number) => {
     if (isSubmittingTransaction) {
       const msg = "Another transaction is already being processed.";
       toast({ title: "In Progress", description: msg, variant: "default" });
-      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "transfer", error: msg });
+      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "transfer_asset", error: msg });
       return Promise.reject(new Error(msg));
     }
     if (!selectedAsset || !publicKey || !sendTransaction) {
       const msg = "Wallet not connected or no asset selected for transfer.";
       toast({ title: "Error", description: msg, variant: "destructive" });
-      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "transfer", error: msg });
+      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "transfer_asset", error: msg });
       return Promise.reject(new Error(msg));
     }
 
     setIsSubmittingTransaction(true);
-    sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "transfer", submitting: true });
+    sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "transfer_asset", submitting: true });
     let signature: string | undefined;
     try {
       const recipientPublicKey = new PublicKey(recipientAddress);
@@ -158,7 +186,7 @@ export default function HomePage() {
           const msg = "Invalid amount for token transfer.";
           toast({ title: "Error", description: msg, variant: "destructive" });
           setIsSubmittingTransaction(false);
-          sendToUnity("SolBlazeManager", "OnTransactionError", { action: "transfer", error: msg });
+          sendToUnity("SolBlazeManager", "OnTransactionError", { action: "transfer_asset", error: msg });
           return Promise.reject(new Error(msg));
         }
         signature = await transferSplToken(connection, wallet, selectedAsset as SplToken, recipientPublicKey, amount);
@@ -166,43 +194,43 @@ export default function HomePage() {
 
       if (signature) {
         toast({
-          title: "Transfer Initiated",
+          title: "Asset Transfer Initiated",
           description: `Transaction signature: ${signature}`,
           action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank" rel="noopener noreferrer" className="text-primary underline">View on Explorer</a>,
         });
-        sendToUnity("SolBlazeManager", "OnTransactionSubmitted", { action: "transfer", signature, explorerUrl: getTransactionExplorerUrl(signature, currentNetwork) });
+        sendToUnity("SolBlazeManager", "OnTransactionSubmitted", { action: "transfer_asset", signature, explorerUrl: getTransactionExplorerUrl(signature, currentNetwork) });
         setIsTransferModalOpen(false);
-        loadAssets(); 
+        loadAssets();
         return Promise.resolve({signature});
       }
-      return Promise.reject(new Error("Transfer signature was not obtained."));
+      return Promise.reject(new Error("Asset transfer signature was not obtained."));
     } catch (error: any) {
-      console.error("Transfer failed:", error);
-      toast({ title: "Transfer Failed", description: error.message, variant: "destructive" });
-      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "transfer", error: error.message });
+      console.error("Asset transfer failed:", error);
+      toast({ title: "Asset Transfer Failed", description: error.message, variant: "destructive" });
+      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "transfer_asset", error: error.message });
       return Promise.reject(error);
     } finally {
       setIsSubmittingTransaction(false);
-      sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "transfer", submitting: false });
+      sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "transfer_asset", submitting: false });
     }
-  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets, currentNetwork, rpcUrl, isSubmittingTransaction]);
+  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets, currentNetwork, rpcUrl, isSubmittingTransaction, sendToUnity]);
 
   const handleConfirmBurn = useCallback(async (amount?: number) => {
     if (isSubmittingTransaction) {
       const msg = "Another transaction is already being processed.";
       toast({ title: "In Progress", description: msg, variant: "default" });
-      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "burn", error: msg });
+      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "burn_asset", error: msg });
       return Promise.reject(new Error(msg));
     }
     if (!selectedAsset || !publicKey || !sendTransaction) {
       const msg = "Wallet not connected or no asset selected for burn.";
       toast({ title: "Error", description: msg, variant: "destructive" });
-      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "burn", error: msg });
+      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "burn_asset", error: msg });
       return Promise.reject(new Error(msg));
     }
 
     setIsSubmittingTransaction(true);
-    sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "burn", submitting: true });
+    sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "burn_asset", submitting: true });
     let signature: string | undefined;
     try {
       if (selectedAsset.type === "nft") {
@@ -214,7 +242,7 @@ export default function HomePage() {
           const msg = "Invalid amount for token burn.";
           toast({ title: "Error", description: msg, variant: "destructive" });
           setIsSubmittingTransaction(false);
-          sendToUnity("SolBlazeManager", "OnTransactionError", { action: "burn", error: msg });
+          sendToUnity("SolBlazeManager", "OnTransactionError", { action: "burn_asset", error: msg });
           return Promise.reject(new Error(msg));
         }
         signature = await burnSplToken(connection, wallet, selectedAsset as SplToken, amount);
@@ -222,148 +250,138 @@ export default function HomePage() {
 
       if (signature) {
         toast({
-          title: "Burn Initiated",
+          title: "Asset Burn Initiated",
           description: `Transaction signature: ${signature}`,
           action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank" rel="noopener noreferrer" className="text-primary underline">View on Explorer</a>,
         });
-        sendToUnity("SolBlazeManager", "OnTransactionSubmitted", { action: "burn", signature, explorerUrl: getTransactionExplorerUrl(signature, currentNetwork) });
+        sendToUnity("SolBlazeManager", "OnTransactionSubmitted", { action: "burn_asset", signature, explorerUrl: getTransactionExplorerUrl(signature, currentNetwork) });
         setIsBurnModalOpen(false);
-        loadAssets(); 
+        loadAssets();
         return Promise.resolve({signature});
       }
-      return Promise.reject(new Error("Burn signature was not obtained."));
+      return Promise.reject(new Error("Asset burn signature was not obtained."));
     } catch (error: any) {
-      console.error("Burn failed:", error);
-      toast({ title: "Burn Failed", description: error.message, variant: "destructive" });
-      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "burn", error: error.message });
+      console.error("Asset burn failed:", error);
+      toast({ title: "Asset Burn Failed", description: error.message, variant: "destructive" });
+      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "burn_asset", error: error.message });
       return Promise.reject(error);
     } finally {
       setIsSubmittingTransaction(false);
-      sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "burn", submitting: false });
+      sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "burn_asset", submitting: false });
     }
-  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets, currentNetwork, rpcUrl, isSubmittingTransaction]);
+  }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets, currentNetwork, rpcUrl, isSubmittingTransaction, sendToUnity]);
 
   const handleConfirmDeposit = useCallback(async (amount: number) => {
     if (isSubmittingTransaction) {
       const msg = "Another transaction is already being processed.";
       toast({ title: "In Progress", description: msg, variant: "default" });
-      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "deposit", error: msg });
+      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "deposit_token", error: msg });
       return Promise.reject(new Error(msg));
     }
     if (selectedAsset?.type !== "token" || !publicKey || !CUSTODIAL_WALLET_ADDRESS) {
       const msg = "Wallet not connected, no token selected, or custodial address not configured for deposit.";
       toast({ title: "Error", description: msg, variant: "destructive" });
-      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "deposit", error: msg });
+      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "deposit_token", error: msg });
       return Promise.reject(new Error(msg));
     }
     if (amount <= 0) {
       const msg = "Invalid deposit amount.";
       toast({ title: "Error", description: msg, variant: "destructive" });
-      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "deposit", error: msg });
+      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "deposit_token", error: msg });
       return Promise.reject(new Error(msg));
     }
 
     setIsSubmittingTransaction(true);
-    sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "deposit", submitting: true });
+    sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "deposit_token", submitting: true });
     try {
       const signature = await depositSplToken(connection, wallet, selectedAsset as SplToken, amount, CUSTODIAL_WALLET_ADDRESS);
       toast({
-        title: "Deposit Initiated",
+        title: "Token Deposit Initiated",
         description: `Transaction signature: ${signature}`,
         action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank" rel="noopener noreferrer" className="text-primary underline">View on Explorer</a>,
       });
-      sendToUnity("SolBlazeManager", "OnTransactionSubmitted", { action: "deposit", signature, explorerUrl: getTransactionExplorerUrl(signature, currentNetwork) });
+      sendToUnity("SolBlazeManager", "OnTransactionSubmitted", { action: "deposit_token", signature, explorerUrl: getTransactionExplorerUrl(signature, currentNetwork) });
       setIsDepositModalOpen(false);
-      loadAssets(); 
+      loadAssets();
       return Promise.resolve({signature});
     } catch (error: any) {
-      console.error("Deposit failed:", error);
-      toast({ title: "Deposit Failed", description: error.message, variant: "destructive" });
-      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "deposit", error: error.message });
+      console.error("Token deposit failed:", error);
+      toast({ title: "Token Deposit Failed", description: error.message, variant: "destructive" });
+      sendToUnity("SolBlazeManager", "OnTransactionError", { action: "deposit_token", error: error.message });
       return Promise.reject(error);
     } finally {
       setIsSubmittingTransaction(false);
-      sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "deposit", submitting: false });
+      sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "deposit_token", submitting: false });
     }
-  }, [selectedAsset, publicKey, connection, wallet, toast, loadAssets, currentNetwork, isSubmittingTransaction]);
+  }, [selectedAsset, publicKey, connection, wallet, toast, loadAssets, currentNetwork, isSubmittingTransaction, sendToUnity]);
 
   const handleRequestWithdrawal = useCallback(async (_grossAmount: number, netAmount: number) => {
     if (isSubmittingTransaction) {
       const msg = "Another transaction is already being processed.";
       toast({ title: "In Progress", description: msg, variant: "default" });
-      sendToUnity("SolBlazeManager", "OnWithdrawalResponse", { success: false, message: msg, error: msg });
+      sendToUnity("SolBlazeManager", "OnWithdrawalResponse", { success: false, message: msg, error: msg, type: 'token' });
       return Promise.reject(new Error(msg));
     }
      if (selectedAsset?.type !== "token" || !publicKey) {
       const msg = "Wallet not connected or no token selected for withdrawal.";
       toast({ title: "Error", description: msg, variant: "destructive" });
-      sendToUnity("SolBlazeManager", "OnWithdrawalResponse", { success: false, message: msg, error: msg });
+      sendToUnity("SolBlazeManager", "OnWithdrawalResponse", { success: false, message: msg, error: msg, type: 'token' });
       return Promise.reject(new Error(msg));
     }
-    if (netAmount <= 0) { 
+    if (netAmount <= 0) {
       const msg = "Invalid withdrawal amount (net amount must be positive).";
       toast({ title: "Error", description: msg, variant: "destructive" });
-      sendToUnity("SolBlazeManager", "OnWithdrawalResponse", { success: false, message: msg, error: msg });
+      sendToUnity("SolBlazeManager", "OnWithdrawalResponse", { success: false, message: msg, error: msg, type: 'token' });
       return Promise.reject(new Error(msg));
     }
 
     setIsSubmittingTransaction(true);
-    sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "withdraw", submitting: true });
+    sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "withdraw_token", submitting: true });
     try {
       const result: WithdrawalResponse = await initiateWithdrawalRequest(
-        selectedAsset as SplToken,
         publicKey.toBase58(),
-        netAmount,
-        currentNetwork
+        netAmount, // This is token units
+        currentNetwork,
+        selectedAsset as SplToken // Pass the token
       );
 
       if (result.success) {
         toast({
-          title: "Withdrawal Processed",
+          title: "Token Withdrawal Processed",
           description: result.signature ? `Transaction Signature: ${result.signature}` : result.message,
           action: result.signature ? <a href={getTransactionExplorerUrl(result.signature, currentNetwork)} target="_blank" rel="noopener noreferrer" className="text-primary underline">View on Explorer</a> : undefined,
         });
-        sendToUnity("SolBlazeManager", "OnWithdrawalResponse", { ...result, explorerUrl: result.signature ? getTransactionExplorerUrl(result.signature, currentNetwork) : undefined });
+        sendToUnity("SolBlazeManager", "OnWithdrawalResponse", { ...result, type: 'token', explorerUrl: result.signature ? getTransactionExplorerUrl(result.signature, currentNetwork) : undefined });
         setIsWithdrawModalOpen(false);
         return Promise.resolve(result);
       } else {
-        toast({ title: "Withdrawal Failed", description: result.message, variant: "destructive" });
-        sendToUnity("SolBlazeManager", "OnWithdrawalResponse", { ...result, error: result.message });
+        toast({ title: "Token Withdrawal Failed", description: result.message, variant: "destructive" });
+        sendToUnity("SolBlazeManager", "OnWithdrawalResponse", { ...result, type: 'token', error: result.message });
         return Promise.reject(new Error(result.message));
       }
     } catch (error: any) {
-      console.error("Withdrawal request failed:", error);
-      const msg = error.message || "Withdrawal request error.";
-      toast({ title: "Withdrawal Request Error", description: msg, variant: "destructive" });
-      sendToUnity("SolBlazeManager", "OnWithdrawalResponse", { success: false, message: msg, error: msg });
+      console.error("Token withdrawal request failed:", error);
+      const msg = error.message || "Token withdrawal request error.";
+      toast({ title: "Token Withdrawal Request Error", description: msg, variant: "destructive" });
+      sendToUnity("SolBlazeManager", "OnWithdrawalResponse", { success: false, message: msg, error: msg, type: 'token' });
       return Promise.reject(error);
     } finally {
       setIsSubmittingTransaction(false);
-      sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "withdraw", submitting: false });
+      sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "withdraw_token", submitting: false });
     }
-  }, [selectedAsset, publicKey, toast, currentNetwork, isSubmittingTransaction]);
-  
+  }, [selectedAsset, publicKey, toast, currentNetwork, isSubmittingTransaction, sendToUnity]);
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       (window as any).unityBridge = {
         connectWallet: async () => {
           try {
             if (!connected) {
-              // This attempts to open the wallet selection modal or auto-connect.
-              // The actual connection is handled by the wallet adapter's UI.
-              // We might need a more direct way if `ConnectWalletButton` is hidden.
-              // For now, assume this triggers the adapter's modal.
-              // A common pattern is to simulate a click on the connect button if it's hidden
-              // or call a method on the adapter if available.
-              // Let's try to use the adapter's connect method if available.
               if (wallet.wallets.length > 0 && !wallet.wallet) {
-                 select(wallet.wallets[0].adapter.name); // Select first available, or provide UI in Unity
-                 // The modal should appear if `select` is called and autoConnect is false or fails.
+                 select(wallet.wallets[0].adapter.name);
               }
-              // If already selected, connect may trigger the wallet.
-              await connectWalletAdapter(); 
+              await connectWalletAdapter();
             }
-            // Connection status will be updated by the main `useEffect` listening to `connected` and `publicKey`
             return Promise.resolve({ connected: wallet.connected, publicKey: wallet.publicKey?.toBase58() || null });
           } catch (error: any) {
             sendToUnity("SolBlazeManager", "OnWalletConnectionError", { error: error.message });
@@ -373,7 +391,7 @@ export default function HomePage() {
         disconnectWallet: async () => {
           try {
             await disconnectWalletAdapter();
-             sendToUnity("SolBlazeManager", "OnWalletDisconnected", {});
+            sendToUnity("SolBlazeManager", "OnWalletDisconnected", {});
             return Promise.resolve();
           } catch (error: any) {
             sendToUnity("SolBlazeManager", "OnWalletConnectionError", { error: error.message });
@@ -386,14 +404,19 @@ export default function HomePage() {
           network: currentNetwork,
         }),
         loadAssets: () => {
-          loadAssets(); // This is already a useCallback
+          loadAssets();
           return Promise.resolve();
         },
         getAssets: () => ({
           nfts,
           cnfts,
           tokens,
+          solBalance
         }),
+        getSolBalance: async () => {
+            const balance = await fetchSolBalance();
+            return Promise.resolve(balance);
+        },
         selectAsset: (assetId: string | null) => {
           setSelectedAssetId(assetId);
           const newSelectedAsset = allFetchedAssets.find(a => a.id === assetId) || null;
@@ -401,6 +424,8 @@ export default function HomePage() {
           return Promise.resolve(newSelectedAsset);
         },
         getSelectedAsset: () => selectedAsset,
+
+        // Asset Transactions
         transferAsset: (recipientAddress: string, amount?: number) => {
           if (!selectedAsset) return Promise.reject(new Error("No asset selected for transfer."));
           return handleConfirmTransfer(recipientAddress, amount);
@@ -409,16 +434,104 @@ export default function HomePage() {
           if (!selectedAsset) return Promise.reject(new Error("No asset selected for burn."));
           return handleConfirmBurn(amount);
         },
-        depositAsset: (amount: number) => {
-          if (selectedAsset?.type !== 'token') return Promise.reject(new Error("Only SPL tokens can be deposited."));
+        depositAsset: (amount: number) => { // For SPL Tokens
+          if (selectedAsset?.type !== 'token') return Promise.reject(new Error("Only SPL tokens can be deposited using depositAsset. Use depositSol for SOL."));
           return handleConfirmDeposit(amount);
         },
-        requestWithdrawal: (grossAmount: number, netAmount: number) => { // Expects netAmount too now
-          if (selectedAsset?.type !== 'token') return Promise.reject(new Error("Only SPL tokens can be withdrawn."));
-          // The modal usually calculates netAmount, Unity might need to do this or send gross only
-          // For now, let's assume Unity sends both as per the current handleRequestWithdrawal
+        requestTokenWithdrawal: (grossAmount: number, netAmount: number) => {
+          if (selectedAsset?.type !== 'token') return Promise.reject(new Error("Only SPL tokens can be withdrawn using requestTokenWithdrawal. Use requestSolWithdrawal for SOL."));
           return handleRequestWithdrawal(grossAmount, netAmount);
         },
+
+        // SOL Transactions
+        transferSol: async (recipientAddress: string, amountSol: number) => {
+           if (isSubmittingTransaction) return Promise.reject(new Error("Another transaction is already being processed."));
+           if (!publicKey || !sendTransaction) return Promise.reject(new Error("Wallet not connected for SOL transfer."));
+           setIsSubmittingTransaction(true);
+           sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "transfer_sol", submitting: true });
+           try {
+             const recipientPublicKey = new PublicKey(recipientAddress);
+             const signature = await transferSol(connection, wallet, recipientPublicKey, amountSol);
+             toast({ title: "SOL Transfer Initiated", description: `Signature: ${signature}`, action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank">View</a> });
+             sendToUnity("SolBlazeManager", "OnTransactionSubmitted", { action: "transfer_sol", signature, explorerUrl: getTransactionExplorerUrl(signature, currentNetwork) });
+             fetchSolBalance();
+             return Promise.resolve({signature});
+           } catch (error: any) {
+             toast({ title: "SOL Transfer Failed", description: error.message, variant: "destructive" });
+             sendToUnity("SolBlazeManager", "OnTransactionError", { action: "transfer_sol", error: error.message });
+             return Promise.reject(error);
+           } finally {
+             setIsSubmittingTransaction(false);
+             sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "transfer_sol", submitting: false });
+           }
+        },
+        depositSol: async (amountSol: number) => {
+           if (isSubmittingTransaction) return Promise.reject(new Error("Another transaction is already being processed."));
+           if (!publicKey || !sendTransaction || !CUSTODIAL_WALLET_ADDRESS) return Promise.reject(new Error("Wallet not connected or custodial address not set for SOL deposit."));
+           setIsSubmittingTransaction(true);
+           sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "deposit_sol", submitting: true });
+           try {
+             const signature = await depositSol(connection, wallet, amountSol, CUSTODIAL_WALLET_ADDRESS);
+             toast({ title: "SOL Deposit Initiated", description: `Signature: ${signature}`, action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank">View</a> });
+             sendToUnity("SolBlazeManager", "OnTransactionSubmitted", { action: "deposit_sol", signature, explorerUrl: getTransactionExplorerUrl(signature, currentNetwork) });
+             fetchSolBalance();
+             return Promise.resolve({signature});
+           } catch (error: any) {
+             toast({ title: "SOL Deposit Failed", description: error.message, variant: "destructive" });
+             sendToUnity("SolBlazeManager", "OnTransactionError", { action: "deposit_sol", error: error.message });
+             return Promise.reject(error);
+           } finally {
+             setIsSubmittingTransaction(false);
+             sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "deposit_sol", submitting: false });
+           }
+        },
+        requestSolWithdrawal: async (_grossAmountSol: number, netAmountSol: number) => { // Unity sends net amount for SOL
+            if (isSubmittingTransaction) return Promise.reject(new Error("Another transaction is already being processed."));
+            if (!publicKey) return Promise.reject(new Error("Wallet not connected for SOL withdrawal."));
+            if (netAmountSol <= 0) return Promise.reject(new Error("Invalid SOL withdrawal amount."));
+
+            setIsSubmittingTransaction(true);
+            sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "withdraw_sol", submitting: true });
+            try {
+                const result = await initiateWithdrawalRequest(publicKey.toBase58(), netAmountSol, currentNetwork); // No token passed, amount is SOL units
+                if (result.success) {
+                    toast({ title: "SOL Withdrawal Processed", description: result.signature ? `Sig: ${result.signature}` : result.message, action: result.signature ? <a href={getTransactionExplorerUrl(result.signature, currentNetwork)} target="_blank">View</a> : undefined });
+                    sendToUnity("SolBlazeManager", "OnWithdrawalResponse", { ...result, type: 'sol', explorerUrl: result.signature ? getTransactionExplorerUrl(result.signature, currentNetwork) : undefined });
+                } else {
+                    toast({ title: "SOL Withdrawal Failed", description: result.message, variant: "destructive" });
+                    sendToUnity("SolBlazeManager", "OnWithdrawalResponse", { ...result, type: 'sol', error: result.message });
+                }
+                return result.success ? Promise.resolve(result) : Promise.reject(new Error(result.message));
+            } catch (error: any) {
+                toast({ title: "SOL Withdrawal Error", description: error.message, variant: "destructive" });
+                sendToUnity("SolBlazeManager", "OnWithdrawalResponse", { success: false, message: error.message, error: error.message, type: 'sol' });
+                return Promise.reject(error);
+            } finally {
+                setIsSubmittingTransaction(false);
+                sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "withdraw_sol", submitting: false });
+            }
+        },
+        burnSol: async (amountSol: number) => {
+           if (isSubmittingTransaction) return Promise.reject(new Error("Another transaction is already being processed."));
+           if (!publicKey || !sendTransaction) return Promise.reject(new Error("Wallet not connected for SOL burn."));
+           setIsSubmittingTransaction(true);
+           sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "burn_sol", submitting: true });
+           try {
+             const signature = await burnSol(connection, wallet, amountSol);
+             toast({ title: "SOL Burn Initiated", description: `Signature: ${signature}`, action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank">View</a> });
+             sendToUnity("SolBlazeManager", "OnTransactionSubmitted", { action: "burn_sol", signature, explorerUrl: getTransactionExplorerUrl(signature, currentNetwork) });
+             fetchSolBalance();
+             return Promise.resolve({signature});
+           } catch (error: any) {
+             toast({ title: "SOL Burn Failed", description: error.message, variant: "destructive" });
+             sendToUnity("SolBlazeManager", "OnTransactionError", { action: "burn_sol", error: error.message });
+             return Promise.reject(error);
+           } finally {
+             setIsSubmittingTransaction(false);
+             sendToUnity("SolBlazeManager", "OnTransactionSubmitting", { action: "burn_sol", submitting: false });
+           }
+        },
+
         setNetwork: (network: SupportedSolanaNetwork) => {
             setCurrentNetwork(network);
             sendToUnity("SolBlazeManager", "OnNetworkChanged", { network });
@@ -426,7 +539,7 @@ export default function HomePage() {
         },
         getCurrentNetwork: () => currentNetwork,
 
-        // --- Methods to open modals for web UI interaction (optional for Unity if it has its own UI) ---
+        // Methods to open modals (might be less relevant if Unity has its own UI)
         openTransferModal: () => {
           if (selectedAsset) setIsTransferModalOpen(true);
           else sendToUnity("SolBlazeManager", "OnModalError", { modal: "transfer", error: "No asset selected."});
@@ -435,13 +548,13 @@ export default function HomePage() {
           if (selectedAsset) setIsBurnModalOpen(true);
           else sendToUnity("SolBlazeManager", "OnModalError", { modal: "burn", error: "No asset selected."});
         },
-        openDepositModal: () => {
+        openDepositModal: () => { // Only for SPL tokens via web UI
           if (selectedAsset?.type === 'token') setIsDepositModalOpen(true);
-          else sendToUnity("SolBlazeManager", "OnModalError", { modal: "deposit", error: "No token selected."});
+          else sendToUnity("SolBlazeManager", "OnModalError", { modal: "deposit_token", error: "No SPL token selected."});
         },
-        openWithdrawModal: () => {
+        openWithdrawModal: () => { // Only for SPL tokens via web UI
           if (selectedAsset?.type === 'token') setIsWithdrawModalOpen(true);
-          else sendToUnity("SolBlazeManager", "OnModalError", { modal: "withdraw", error: "No token selected."});
+          else sendToUnity("SolBlazeManager", "OnModalError", { modal: "withdraw_token", error: "No SPL token selected."});
         },
       };
     }
@@ -450,15 +563,14 @@ export default function HomePage() {
         delete (window as any).unityBridge;
       }
     };
-  // Include all dependencies that are used inside the bridge functions
   }, [
-    connected, publicKey, currentNetwork, nfts, cnfts, tokens, selectedAsset, allFetchedAssets,
+    connected, publicKey, currentNetwork, nfts, cnfts, tokens, solBalance, selectedAsset, allFetchedAssets,
     wallet, connectWalletAdapter, disconnectWalletAdapter, select,
-    loadAssets, setSelectedAssetId,
+    loadAssets, setSelectedAssetId, fetchSolBalance,
     handleConfirmTransfer, handleConfirmBurn, handleConfirmDeposit, handleRequestWithdrawal,
-    setCurrentNetwork,
+    setCurrentNetwork, connection, rpcUrl, sendToUnity, toast,
     setIsTransferModalOpen, setIsBurnModalOpen, setIsDepositModalOpen, setIsWithdrawModalOpen,
-    isSubmittingTransaction // Ensure bridge functions are aware of this
+    isSubmittingTransaction
   ]);
 
 
@@ -468,116 +580,36 @@ export default function HomePage() {
     sendToUnity("SolBlazeManager", "OnAssetSelected", { asset: newSelectedAsset });
   };
 
-  const AssetList = ({ assets }: { assets: Asset[] }) => (
-    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 p-1">
-      {assets.length === 0 && !isLoadingAssets && <p className="col-span-full text-center text-muted-foreground py-8">No assets of this type found on {currentNetwork}.</p>}
-      {isLoadingAssets ? 
-        Array.from({ length: 8 }).map((_, i) => (
-          <Card key={i}>
-            <CardHeader><Skeleton className="h-6 w-3/4" /></CardHeader>
-            <CardContent>
-              <Skeleton className="aspect-square w-full mb-2" />
-              <Skeleton className="h-4 w-1/2" />
-            </CardContent>
-          </Card>
-        ))
-        : assets.map((asset) => (
-        <AssetCard key={asset.id} asset={asset} onClick={() => handleSelectAsset(asset.id)} />
-      ))}
-    </div>
-  );
 
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground">
-      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container flex h-20 items-center justify-between px-4 md:px-6">
+    <div className="flex flex-col min-h-screen bg-gray-900 text-white overflow-hidden">
+       <header className="sticky top-0 z-[100] w-full border-b border-gray-700 bg-gray-800/95 backdrop-blur supports-[backdrop-filter]:bg-gray-800/60">
+        <div className="container flex h-16 items-center justify-between px-4 md:px-6">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <svg width="32" height="32" viewBox="0 0 100 100" fill="hsl(var(--primary))" xmlns="http://www.w3.org/2000/svg">
+              <svg width="28" height="28" viewBox="0 0 100 100" fill="hsl(var(--primary))" xmlns="http://www.w3.org/2000/svg">
                 <path d="M50 0L61.226 23.407L87.364 26.795L70.957 44.09L73.607 70.039L50 58.36L26.393 70.039L29.043 44.09L12.636 26.795L38.774 23.407L50 0ZM50 28.778L43.111 54.444H71.111L64.222 28.778H50ZM28.889 60L35.778 85.667L50 73.333L64.222 85.667L71.111 60H28.889Z"/>
               </svg>
-              <h1 className="text-2xl font-bold font-headline text-primary">SolBlaze</h1>
+              <h1 className="text-xl font-bold text-primary">SolBlaze GameBridge</h1>
             </div>
-            <NetworkSwitcher /> 
+            <NetworkSwitcher />
           </div>
           <ConnectWalletButton />
         </div>
       </header>
 
-      <main className="flex-1 container mx-auto p-4 md:p-6 space-y-8">
-        {!connected ? (
-          <Card className="text-center py-12 shadow-lg">
-            <CardHeader>
-              <CardTitle className="text-3xl font-headline">Welcome to SolBlaze Dashboard</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-lg text-muted-foreground mb-6">Connect your Solana wallet to manage your assets on the {currentNetwork} network.</p>
-              <ConnectWalletButton />
-            </CardContent>
-          </Card>
-        ) : (
-          <>
-            <section className="space-y-4">
-              <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-                <h2 className="text-2xl font-semibold font-headline">Select Asset ({currentNetwork})</h2>
-                 <Button variant="outline" onClick={loadAssets} disabled={isLoadingAssets || isSubmittingTransaction}>
-                  <RefreshCw className={`mr-2 h-4 w-4 ${isLoadingAssets ? 'animate-spin' : ''}`} />
-                  Refresh Assets
-                </Button>
-              </div>
-              <AssetDropdown
-                nfts={nfts}
-                cnfts={cnfts}
-                tokens={tokens}
-                selectedAssetId={selectedAssetId}
-                onSelectAsset={handleSelectAsset}
-                isLoading={isLoadingAssets}
-                disabled={!publicKey || isSubmittingTransaction}
-              />
-            </section>
-
-            {selectedAsset && (
-              <section>
-                <AssetDisplay
-                  asset={selectedAsset}
-                  onTransferClick={() => setIsTransferModalOpen(true)}
-                  onBurnClick={() => setIsBurnModalOpen(true)}
-                  onDepositClick={selectedAsset.type === 'token' ? () => setIsDepositModalOpen(true) : undefined}
-                  onWithdrawClick={selectedAsset.type === 'token' ? () => setIsWithdrawModalOpen(true) : undefined}
-                  currentNetwork={currentNetwork}
-                  isActionDisabled={isSubmittingTransaction}
-                />
-              </section>
-            )}
-
-            <section>
-              <Card className="shadow-lg">
-                <CardHeader>
-                  <CardTitle className="text-2xl font-semibold font-headline">My Wallet Assets ({currentNetwork})</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Tabs defaultValue="nfts" className="w-full">
-                    <TabsList className="grid w-full grid-cols-3 mb-4">
-                      <TabsTrigger value="nfts" className="text-base py-2 flex items-center gap-2"><Package className="h-5 w-5" />NFTs ({nfts.length})</TabsTrigger>
-                      <TabsTrigger value="cnfts" className="text-base py-2 flex items-center gap-2"><PackageSearch className="h-5 w-5" />cNFTs ({cnfts.length})</TabsTrigger>
-                      <TabsTrigger value="tokens" className="text-base py-2 flex items-center gap-2"><CoinsIcon className="h-5 w-5" />Tokens ({tokens.length})</TabsTrigger>
-                    </TabsList>
-                    <TabsContent value="nfts"><AssetList assets={nfts} /></TabsContent>
-                    <TabsContent value="cnfts"><AssetList assets={cnfts} /></TabsContent>
-                    <TabsContent value="tokens"><AssetList assets={tokens} /></TabsContent>
-                  </Tabs>
-                </CardContent>
-              </Card>
-            </section>
-          </>
-        )}
+      <main className="flex-1 w-full h-[calc(100vh-4rem)] p-0 m-0"> {/* Adjusted height for header */}
+        <iframe
+          ref={iframeRef}
+          src="/unity-game/index.html" // Path to your Unity WebGL build's index.html
+          title="Unity Game"
+          className="w-full h-full border-none"
+          allow="autoplay; fullscreen *; geolocation; microphone; camera; midi; monetization; xr-spatial-tracking; gamepad; gyroscope; accelerometer; xr; cross-origin-isolated"
+          sandbox="allow-forms allow-modals allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts allow-top-navigation-by-user-activation"
+        ></iframe>
       </main>
 
-      <footer className="py-6 text-center text-sm text-muted-foreground border-t">
-        <p>&copy; {new Date().getFullYear()} SolBlaze. All rights reserved. Network: {currentNetwork}</p>
-        <p className="mt-1">Powered by Helius and Solana.</p>
-      </footer>
-
+      {/* Modals remain available for web-based testing or specific Unity-triggered UI if needed */}
       {selectedAsset && (
         <>
           <TransferModal

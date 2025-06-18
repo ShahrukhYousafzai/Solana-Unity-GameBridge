@@ -7,9 +7,10 @@ import {
   TransactionMessage,
   type AccountMeta,
   TransactionInstruction,
-  SendTransactionError, 
+  SendTransactionError,
   type Commitment,
-  Keypair, 
+  Keypair,
+  LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
@@ -18,7 +19,7 @@ import {
   createCloseAccountInstruction,
   createAssociatedTokenAccountInstruction,
   TOKEN_PROGRAM_ID,
-  TOKEN_2022_PROGRAM_ID, 
+  TOKEN_2022_PROGRAM_ID,
 } from "@solana/spl-token";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import type { Nft, CNft, SplToken } from "@/types/solana";
@@ -35,14 +36,14 @@ import {
 import { fetchHeliusAssetProof } from "@/lib/asset-loader";
 import BN from 'bn.js';
 import * as bs58 from "bs58";
-import { CUSTODIAL_WALLET_ADDRESS } from "@/config";
+import { CUSTODIAL_WALLET_ADDRESS, SOL_BURN_ADDRESS, SOL_DECIMALS } from "@/config";
 
 
 async function sendTransaction(
   instructions: TransactionInstruction[],
   connection: Connection,
   wallet: WalletContextState,
-  signers?: Keypair[] 
+  signers?: Keypair[]
 ): Promise<string> {
   const payerPublicKey = wallet.publicKey;
   const signTransactionFn = wallet.signTransaction;
@@ -69,7 +70,7 @@ async function sendTransaction(
       }
     });
   });
-  
+
   let signature: string = "";
   try {
     const latestBlockhash = await connection.getLatestBlockhash();
@@ -84,17 +85,17 @@ async function sendTransaction(
     }).compileToV0Message();
 
     const versionedTransaction = new VersionedTransaction(messageV0);
-    
+
     if (signers && signers.length > 0) {
       versionedTransaction.sign(signers);
     }
 
     const signedTransaction = await signTransactionFn(versionedTransaction);
-    
+
     console.log("[sendTransaction] Sending transaction with skipPreflight: false, maxRetries: 0");
     signature = await connection.sendTransaction(signedTransaction, {
-      skipPreflight: false, 
-      maxRetries: 0, 
+      skipPreflight: false,
+      maxRetries: 0,
     });
     console.log("[sendTransaction] Transaction sent, signature:", signature);
 
@@ -139,7 +140,7 @@ async function sendTransaction(
         console.warn("[sendTransaction] Failed to execute or process error.getLogs():", e);
       }
     }
-    
+
     const errorMessage = `Transaction failed: ${error.message || JSON.stringify(error)}`;
     let logsMessage: string;
 
@@ -148,7 +149,7 @@ async function sendTransaction(
     } else {
       logsMessage = '\n(No specific transaction logs available or logs were empty/not in expected array format)';
     }
-    
+
     const fullError = errorMessage + logsMessage;
     console.error("[sendTransaction] Full error details:", fullError, "Original error object:", error);
     throw new Error(fullError);
@@ -159,7 +160,7 @@ async function sendTransaction(
 export async function transferNft(
   connection: Connection,
   wallet: WalletContextState,
-  nft: Nft, 
+  nft: Nft,
   recipientAddress: PublicKey
 ): Promise<string> {
   const ownerPublicKey = wallet.publicKey;
@@ -169,7 +170,7 @@ export async function transferNft(
   }
 
   const mintPublicKey = new PublicKey(nft.id);
-  const tokenProgramPk = TOKEN_PROGRAM_ID; 
+  const tokenProgramPk = TOKEN_PROGRAM_ID;
 
   const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey, false, tokenProgramPk);
   const recipientAta = getAssociatedTokenAddressSync(mintPublicKey, recipientAddress, false, tokenProgramPk);
@@ -184,7 +185,7 @@ export async function transferNft(
         recipientAta,
         recipientAddress,
         mintPublicKey,
-        tokenProgramPk 
+        tokenProgramPk
       )
     );
   }
@@ -194,9 +195,9 @@ export async function transferNft(
       sourceAta,
       recipientAta,
       ownerPublicKey,
-      1, 
+      1,
       [],
-      tokenProgramPk 
+      tokenProgramPk
     )
   );
   console.log("[transferNft] Instructions prepared:", JSON.stringify(instructions.map(ix => ({programId: ix.programId.toBase58(), keys: ix.keys.map(k=>k.pubkey.toBase58())})), null, 2));
@@ -217,7 +218,7 @@ export async function transferSplToken(
   }
 
   const mintPublicKey = new PublicKey(token.id);
-  const tokenProgramPk = new PublicKey(token.tokenProgramId); 
+  const tokenProgramPk = new PublicKey(token.tokenProgramId);
   const rawAmount = BigInt(Math.round(amount * (10 ** token.decimals)));
 
   const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey, false, tokenProgramPk);
@@ -229,11 +230,11 @@ export async function transferSplToken(
   if (!recipientAtaInfo) {
     instructions.push(
       createAssociatedTokenAccountInstruction(
-        ownerPublicKey, 
-        recipientAta,   
-        recipientAddress, 
-        mintPublicKey,  
-        tokenProgramPk  
+        ownerPublicKey,
+        recipientAta,
+        recipientAddress,
+        mintPublicKey,
+        tokenProgramPk
       )
     );
   }
@@ -245,7 +246,7 @@ export async function transferSplToken(
       ownerPublicKey,
       rawAmount,
       [],
-      tokenProgramPk 
+      tokenProgramPk
     )
   );
   console.log("[transferSplToken] Instructions prepared:", JSON.stringify(instructions.map(ix => ({programId: ix.programId.toBase58(), keys: ix.keys.map(k=>k.pubkey.toBase58())})), null, 2));
@@ -255,13 +256,13 @@ export async function transferSplToken(
 export async function burnNft(
   connection: Connection,
   wallet: WalletContextState,
-  nft: Nft 
+  nft: Nft
 ): Promise<string> {
   const ownerPublicKey = wallet.publicKey;
   if (!ownerPublicKey) throw new Error("Wallet not connected.");
 
   const mintPublicKey = new PublicKey(nft.id);
-  const tokenProgramPk = TOKEN_PROGRAM_ID; 
+  const tokenProgramPk = TOKEN_PROGRAM_ID;
   const ownerTokenAccount = nft.tokenAddress ? new PublicKey(nft.tokenAddress) : getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey, false, tokenProgramPk);
 
 
@@ -270,16 +271,16 @@ export async function burnNft(
       ownerTokenAccount,
       mintPublicKey,
       ownerPublicKey,
-      1, 
+      1,
       [],
-      tokenProgramPk 
+      tokenProgramPk
     ),
     createCloseAccountInstruction(
       ownerTokenAccount,
-      ownerPublicKey, 
-      ownerPublicKey, 
+      ownerPublicKey,
+      ownerPublicKey,
       [],
-      tokenProgramPk 
+      tokenProgramPk
     )
   ];
   console.log("[burnNft] Instructions prepared:", JSON.stringify(instructions.map(ix => ({programId: ix.programId.toBase58(), keys: ix.keys.map(k=>k.pubkey.toBase58())})), null, 2));
@@ -296,7 +297,7 @@ export async function burnSplToken(
   if (!ownerPublicKey) throw new Error("Wallet not connected.");
 
   const mintPublicKey = new PublicKey(token.id);
-  const tokenProgramPk = new PublicKey(token.tokenProgramId); 
+  const tokenProgramPk = new PublicKey(token.tokenProgramId);
   const rawAmount = BigInt(Math.round(amount * (10 ** token.decimals)));
   const ownerTokenAccount = token.tokenAddress ? new PublicKey(token.tokenAddress) : getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey, false, tokenProgramPk);
 
@@ -307,7 +308,7 @@ export async function burnSplToken(
       ownerPublicKey,
       rawAmount,
       [],
-      tokenProgramPk 
+      tokenProgramPk
     )
   ];
 
@@ -315,10 +316,10 @@ export async function burnSplToken(
     instructions.push(
       createCloseAccountInstruction(
         ownerTokenAccount,
-        ownerPublicKey, 
-        ownerPublicKey, 
+        ownerPublicKey,
+        ownerPublicKey,
         [],
-        tokenProgramPk 
+        tokenProgramPk
       )
     );
   }
@@ -332,7 +333,7 @@ const mapProofForBubblegum = (assetProof: { proof: string[] }): AccountMeta[] =>
     return [];
   }
   const validProofPubkeys = assetProof.proof.filter(p => typeof p === 'string' && p.trim() !== '');
-  
+
   return validProofPubkeys.map((node) => ({
     pubkey: new PublicKey(node),
     isSigner: false,
@@ -345,21 +346,21 @@ export async function transferCNft(
   wallet: WalletContextState,
   cnft: CNft,
   recipientAddress: PublicKey,
-  rpcUrl: string 
+  rpcUrl: string
 ): Promise<string> {
   const walletPublicKey = wallet.publicKey;
 
   if (!walletPublicKey) throw new Error("Wallet not connected for cNFT transfer.");
   if (!(walletPublicKey instanceof PublicKey)) throw new Error("Invalid wallet public key for cNFT transfer.");
   if (!(recipientAddress instanceof PublicKey)) throw new Error('Recipient address is not a valid PublicKey for cNFT transfer.');
-  
+
   if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing for transfer.");
   const { compression } = cnft.rawHeliusAsset;
 
   if (typeof compression.data_hash !== 'string' || !compression.data_hash.trim()) throw new Error("Compression data_hash missing/invalid.");
   if (typeof compression.creator_hash !== 'string' || !compression.creator_hash.trim()) throw new Error("Compression creator_hash missing/invalid.");
   if (typeof compression.leaf_id !== 'number') throw new Error("Compression leaf_id missing/invalid (not a number).");
-  
+
   const assetProof = await fetchHeliusAssetProof(cnft.id, rpcUrl);
   if (!assetProof || typeof assetProof.root !== 'string' || !assetProof.root.trim() || typeof assetProof.tree_id !== 'string' || !assetProof.tree_id.trim()) {
     throw new Error('Failed to retrieve valid asset proof (root or tree_id missing/invalid).');
@@ -377,23 +378,23 @@ export async function transferCNft(
     root: [...bs58.decode(assetProof.root)],
     dataHash: [...bs58.decode(compression.data_hash)],
     creatorHash: [...bs58.decode(compression.creator_hash)],
-    nonce: new BN(compression.leaf_id), 
-    index: compression.leaf_id, 
+    nonce: new BN(compression.leaf_id),
+    index: compression.leaf_id,
   };
 
   const transferInstructionAccounts = {
     treeAuthority: treeAuthority,
     leafOwner: walletPublicKey,
-    leafDelegate: walletPublicKey, 
+    leafDelegate: walletPublicKey,
     newLeafOwner: recipientAddress,
     merkleTree: merkleTreeKey,
     logWrapper: SPL_NOOP_PROGRAM_ID,
     compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
     anchorRemainingAccounts: proofPathAsAccounts,
   };
-  
+
   const transferInstruction = createBubblegumTransferInstruction(transferInstructionAccounts, transferArgs);
-  
+
   if (!transferInstruction.programId || !(transferInstruction.programId instanceof PublicKey)) {
      transferInstruction.programId = BUBBLEGUM_PROGRAM_ID;
   }
@@ -408,7 +409,7 @@ export async function burnCNft(
   connection: Connection,
   wallet: WalletContextState,
   cnft: CNft,
-  rpcUrl: string 
+  rpcUrl: string
 ): Promise<string> {
   const walletPublicKey = wallet.publicKey;
 
@@ -432,21 +433,21 @@ export async function burnCNft(
     [merkleTreeKey.toBuffer()],
     BUBBLEGUM_PROGRAM_ID
   );
-  
+
   const proofPathAsAccounts = mapProofForBubblegum(assetProof);
 
   const burnArgs = {
     root: [...bs58.decode(assetProof.root)],
     dataHash: [...bs58.decode(compression.data_hash)],
     creatorHash: [...bs58.decode(compression.creator_hash)],
-    nonce: new BN(compression.leaf_id), 
-    index: compression.leaf_id, 
+    nonce: new BN(compression.leaf_id),
+    index: compression.leaf_id,
   };
 
   const burnInstructionAccounts = {
     treeAuthority: treeAuthority,
     leafOwner: walletPublicKey,
-    leafDelegate: walletPublicKey, 
+    leafDelegate: walletPublicKey,
     merkleTree: merkleTreeKey,
     logWrapper: SPL_NOOP_PROGRAM_ID,
     compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
@@ -474,7 +475,7 @@ export async function depositSplToken(
   const ownerPublicKey = wallet.publicKey;
   if (!ownerPublicKey) throw new Error("Wallet not connected for deposit.");
   if (!custodialWalletAddressString) throw new Error("Custodial wallet address not configured for deposit.");
-  
+
   let custodialPublicKey: PublicKey;
   try {
     custodialPublicKey = new PublicKey(custodialWalletAddressString);
@@ -495,11 +496,11 @@ export async function depositSplToken(
   if (!recipientAtaInfo) {
     instructions.push(
       createAssociatedTokenAccountInstruction(
-        ownerPublicKey, 
-        recipientAta,   
-        custodialPublicKey, 
-        mintPublicKey,  
-        tokenProgramPk  
+        ownerPublicKey,
+        recipientAta,
+        custodialPublicKey,
+        mintPublicKey,
+        tokenProgramPk
       )
     );
   }
@@ -511,7 +512,7 @@ export async function depositSplToken(
       ownerPublicKey,
       rawAmount,
       [],
-      tokenProgramPk 
+      tokenProgramPk
     )
   );
   console.log("[depositSplToken] Instructions prepared for deposit:", JSON.stringify(instructions.map(ix => ({programId: ix.programId.toBase58(), keys: ix.keys.map(k=>k.pubkey.toBase58())})), null, 2));
@@ -525,29 +526,41 @@ export interface WithdrawalResponse {
   signature?: string;
 }
 
+// Used for both SPL Token and SOL withdrawals
 export async function initiateWithdrawalRequest(
-  token: SplToken,
   userWalletAddress: string,
-  netAmountToUser: number, 
-  currentNetwork: SupportedSolanaNetwork
+  netAmount: number, // For SPL tokens, this is token units; for SOL, this is SOL units
+  currentNetwork: SupportedSolanaNetwork,
+  token?: SplToken // Optional: only for SPL token withdrawals
 ): Promise<WithdrawalResponse> {
-  console.log(`[initiateWithdrawalRequest] User ${userWalletAddress} requested withdrawal of ${token.name} (${token.symbol}).`);
-  console.log(`  Net Amount to User (after tax): ${netAmountToUser} ${token.symbol}`);
-  console.log(`  Token Mint: ${token.id}, Decimals: ${token.decimals}, Program ID: ${token.tokenProgramId}`);
+  console.log(`[initiateWithdrawalRequest] User ${userWalletAddress} requested withdrawal.`);
+  console.log(`  Net Amount to User: ${netAmount} ${token ? token.symbol : 'SOL'}`);
+  if (token) {
+    console.log(`  Token Mint: ${token.id}, Decimals: ${token.decimals}, Program ID: ${token.tokenProgramId}`);
+  }
   console.log(`  Network: ${currentNetwork}`);
-  
+
+  const payload: any = {
+    userWalletAddress,
+    netAmount, // This will be lamports for SOL, token units for SPL at API level
+    network: currentNetwork,
+  };
+
+  if (token) {
+    payload.tokenMint = token.id;
+    payload.tokenDecimals = token.decimals;
+    payload.tokenProgramId = token.tokenProgramId;
+  } else {
+    // If no token, it's a SOL withdrawal. API will expect amount in lamports.
+    payload.netAmount = Math.round(netAmount * LAMPORTS_PER_SOL); // Convert SOL to lamports for API
+    payload.isSolWithdrawal = true; // Explicit flag for API
+  }
+
   try {
     const response = await fetch('/api/process-withdrawal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tokenMint: token.id,
-        userWalletAddress,
-        netAmount: netAmountToUser,
-        tokenDecimals: token.decimals,
-        tokenProgramId: token.tokenProgramId,
-        network: currentNetwork,
-      }),
+      body: JSON.stringify(payload),
     });
 
     const result = await response.json();
@@ -562,3 +575,88 @@ export async function initiateWithdrawalRequest(
   }
 }
 
+export async function transferSol(
+  connection: Connection,
+  wallet: WalletContextState,
+  recipientAddress: PublicKey,
+  amountSol: number // Amount in SOL
+): Promise<string> {
+  const ownerPublicKey = wallet.publicKey;
+  if (!ownerPublicKey) throw new Error("Wallet not connected for SOL transfer.");
+  if (!(recipientAddress instanceof PublicKey)) {
+    throw new Error('Recipient address is not a valid PublicKey instance for SOL transfer.');
+  }
+
+  const lamports = BigInt(Math.round(amountSol * LAMPORTS_PER_SOL));
+  if (lamports <= BigInt(0)) {
+    throw new Error("SOL transfer amount must be positive.");
+  }
+
+  const instructions: TransactionInstruction[] = [
+    SystemProgram.transfer({
+      fromPubkey: ownerPublicKey,
+      toPubkey: recipientAddress,
+      lamports: lamports,
+    }),
+  ];
+  console.log(`[transferSol] Prepared SOL transfer of ${amountSol} SOL (${lamports} lamports) to ${recipientAddress.toBase58()}`);
+  return sendTransaction(instructions, connection, wallet);
+}
+
+export async function depositSol(
+  connection: Connection,
+  wallet: WalletContextState,
+  amountSol: number, // Amount in SOL
+  custodialWalletAddressString: string | undefined
+): Promise<string> {
+  const ownerPublicKey = wallet.publicKey;
+  if (!ownerPublicKey) throw new Error("Wallet not connected for SOL deposit.");
+  if (!custodialWalletAddressString) throw new Error("Custodial wallet address not configured for SOL deposit.");
+
+  let custodialPublicKey: PublicKey;
+  try {
+    custodialPublicKey = new PublicKey(custodialWalletAddressString);
+  } catch (e) {
+    throw new Error("Invalid custodial wallet address format for SOL deposit.");
+  }
+
+  const lamports = BigInt(Math.round(amountSol * LAMPORTS_PER_SOL));
+  if (lamports <= BigInt(0)) {
+    throw new Error("SOL deposit amount must be positive.");
+  }
+
+  const instructions: TransactionInstruction[] = [
+    SystemProgram.transfer({
+      fromPubkey: ownerPublicKey,
+      toPubkey: custodialPublicKey,
+      lamports: lamports,
+    }),
+  ];
+  console.log(`[depositSol] Prepared SOL deposit of ${amountSol} SOL (${lamports} lamports) to custodial wallet ${custodialPublicKey.toBase58()}`);
+  return sendTransaction(instructions, connection, wallet);
+}
+
+export async function burnSol(
+  connection: Connection,
+  wallet: WalletContextState,
+  amountSol: number // Amount in SOL
+): Promise<string> {
+  const ownerPublicKey = wallet.publicKey;
+  if (!ownerPublicKey) throw new Error("Wallet not connected for SOL burn.");
+
+  const burnAddressPublicKey = new PublicKey(SOL_BURN_ADDRESS);
+  const lamports = BigInt(Math.round(amountSol * LAMPORTS_PER_SOL));
+  if (lamports <= BigInt(0)) {
+    throw new Error("SOL burn amount must be positive.");
+  }
+
+  const instructions: TransactionInstruction[] = [
+    SystemProgram.transfer({
+      fromPubkey: ownerPublicKey,
+      toPubkey: burnAddressPublicKey,
+      lamports: lamports,
+    }),
+  ];
+  console.log(`[burnSol] Prepared SOL burn (transfer to ${SOL_BURN_ADDRESS}) of ${amountSol} SOL (${lamports} lamports)`);
+  return sendTransaction(instructions, connection, wallet);
+}

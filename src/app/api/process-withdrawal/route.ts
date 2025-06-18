@@ -1,6 +1,6 @@
 
 import { NextResponse } from 'next/server';
-import { Connection, PublicKey, Keypair, SystemProgram, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+import { Connection, PublicKey, Keypair, SystemProgram, TransactionMessage, VersionedTransaction, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { getAssociatedTokenAddressSync, createTransferInstruction, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, createAssociatedTokenAccountInstruction } from '@solana/spl-token';
 import { getRpcUrl, type SupportedSolanaNetwork } from '@/config';
 import * as bs58 from 'bs58';
@@ -17,24 +17,31 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const {
-      tokenMint,
+      tokenMint, // Optional: only for SPL token withdrawals
       userWalletAddress,
-      netAmount, // Amount user actually receives
-      tokenDecimals,
-      tokenProgramId,
-      network
+      netAmount, // For SPL tokens, this is token units; for SOL, this is LAMPORTS
+      tokenDecimals, // Optional: only for SPL token withdrawals
+      tokenProgramId, // Optional: only for SPL token withdrawals
+      network,
+      isSolWithdrawal, // Explicit flag for SOL withdrawal
     }: {
-      tokenMint: string;
+      tokenMint?: string;
       userWalletAddress: string;
-      netAmount: number;
-      tokenDecimals: number;
-      tokenProgramId: string;
+      netAmount: number; // Note: For SOL, this will be in lamports from the frontend payload
+      tokenDecimals?: number;
+      tokenProgramId?: string;
       network: SupportedSolanaNetwork;
+      isSolWithdrawal?: boolean;
     } = body;
 
-    if (!tokenMint || !userWalletAddress || typeof netAmount !== 'number' || netAmount <= 0 || typeof tokenDecimals !== 'number' || !tokenProgramId || !network) {
-      return NextResponse.json({ success: false, message: "Missing or invalid parameters." }, { status: 400 });
+    if (!userWalletAddress || typeof netAmount !== 'number' || netAmount <= 0 || !network) {
+      return NextResponse.json({ success: false, message: "Missing or invalid common parameters (userWalletAddress, netAmount, network)." }, { status: 400 });
     }
+
+    if (!isSolWithdrawal && (!tokenMint || typeof tokenDecimals !== 'number' || !tokenProgramId)) {
+      return NextResponse.json({ success: false, message: "Missing token-specific parameters for SPL withdrawal (tokenMint, tokenDecimals, tokenProgramId)." }, { status: 400 });
+    }
+
 
     const custodialWalletPrivateKeyString = process.env.CUSTODIAL_WALLET_PRIVATE_KEY;
     if (!custodialWalletPrivateKeyString) {
@@ -45,7 +52,6 @@ export async function POST(request: Request) {
     let custodialKeypair: Keypair;
     try {
       let privateKeyBytes: Uint8Array;
-      // Try to parse as JSON array first (e.g., "[10,20,30,...]")
       try {
         const keyArray = JSON.parse(custodialWalletPrivateKeyString);
         if (Array.isArray(keyArray) && keyArray.every(num => typeof num === 'number')) {
@@ -54,7 +60,6 @@ export async function POST(request: Request) {
           throw new Error("Parsed JSON is not an array of numbers.");
         }
       } catch (jsonError) {
-        // If JSON.parse fails or it's not an array of numbers, assume it's a base58 string
         privateKeyBytes = bs58.decode(custodialWalletPrivateKeyString);
       }
       custodialKeypair = Keypair.fromSecretKey(privateKeyBytes);
@@ -65,41 +70,67 @@ export async function POST(request: Request) {
 
     const rpcUrl = getRpcUrl(network, process.env.NEXT_PUBLIC_HELIUS_API_KEY);
     const connection = new Connection(rpcUrl, 'confirmed');
-
-    const mintPublicKey = new PublicKey(tokenMint);
     const recipientPublicKey = new PublicKey(userWalletAddress);
-    const splTokenProgramId = new PublicKey(tokenProgramId);
-    const rawAmount = BigInt(Math.round(netAmount * (10 ** tokenDecimals)));
-
-    const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, custodialKeypair.publicKey, false, splTokenProgramId);
-    const recipientAta = getAssociatedTokenAddressSync(mintPublicKey, recipientPublicKey, false, splTokenProgramId);
-
     const instructions = [];
 
-    // Check if recipient ATA exists, create if not
-    const recipientAtaInfo = await connection.getAccountInfo(recipientAta);
-    if (!recipientAtaInfo) {
+    let withdrawalTypeMessage: string;
+
+    if (isSolWithdrawal) {
+      // SOL Withdrawal
+      const lamportsToWithdraw = BigInt(netAmount); // netAmount is already in lamports for SOL
+      if (lamportsToWithdraw <= BigInt(0)) {
+        return NextResponse.json({ success: false, message: "SOL withdrawal amount must be positive." }, { status: 400 });
+      }
       instructions.push(
-        createAssociatedTokenAccountInstruction(
-          custodialKeypair.publicKey, // Payer for ATA creation
+        SystemProgram.transfer({
+          fromPubkey: custodialKeypair.publicKey,
+          toPubkey: recipientPublicKey,
+          lamports: lamportsToWithdraw,
+        })
+      );
+      withdrawalTypeMessage = `Withdrawal of ${Number(lamportsToWithdraw) / LAMPORTS_PER_SOL} SOL processed successfully.`;
+
+    } else if (tokenMint && typeof tokenDecimals === 'number' && tokenProgramId) {
+      // SPL Token Withdrawal
+      const mintPublicKey = new PublicKey(tokenMint);
+      const splTokenProgramId = new PublicKey(tokenProgramId);
+      const rawAmount = BigInt(Math.round(netAmount * (10 ** tokenDecimals))); // netAmount is in token units
+
+      if (rawAmount <= BigInt(0)) {
+        return NextResponse.json({ success: false, message: "Token withdrawal amount must be positive." }, { status: 400 });
+      }
+
+      const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, custodialKeypair.publicKey, false, splTokenProgramId);
+      const recipientAta = getAssociatedTokenAddressSync(mintPublicKey, recipientPublicKey, false, splTokenProgramId);
+
+      const recipientAtaInfo = await connection.getAccountInfo(recipientAta);
+      if (!recipientAtaInfo) {
+        instructions.push(
+          createAssociatedTokenAccountInstruction(
+            custodialKeypair.publicKey,
+            recipientAta,
+            recipientPublicKey,
+            mintPublicKey,
+            splTokenProgramId
+          )
+        );
+      }
+
+      instructions.push(
+        createTransferInstruction(
+          sourceAta,
           recipientAta,
-          recipientPublicKey,
-          mintPublicKey,
+          custodialKeypair.publicKey,
+          rawAmount,
+          [],
           splTokenProgramId
         )
       );
+      withdrawalTypeMessage = `Withdrawal of ${netAmount} ${tokenMint.substring(0,4)}... processed successfully.`;
+    } else {
+       return NextResponse.json({ success: false, message: "Invalid withdrawal type or missing parameters." }, { status: 400 });
     }
 
-    instructions.push(
-      createTransferInstruction(
-        sourceAta,
-        recipientAta,
-        custodialKeypair.publicKey,
-        rawAmount,
-        [],
-        splTokenProgramId
-      )
-    );
 
     const latestBlockhash = await connection.getLatestBlockhash();
     const messageV0 = new TransactionMessage({
@@ -120,7 +151,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: `Withdrawal of ${netAmount} ${tokenMint.substring(0,4)}... processed successfully.`,
+      message: withdrawalTypeMessage,
       signature
     });
 

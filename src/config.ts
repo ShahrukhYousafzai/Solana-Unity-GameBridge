@@ -38,3 +38,6 @@ export const getRpcUrl = (network: SupportedSolanaNetwork, apiKey: string | unde
   return "https://api.mainnet-beta.solana.com";
 };
 
+export const SOL_BURN_ADDRESS = "11111111111111111111111111111111";
+export const SOL_DECIMALS = 9;
+
