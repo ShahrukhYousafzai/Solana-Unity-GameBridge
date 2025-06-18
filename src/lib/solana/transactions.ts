@@ -456,3 +456,4 @@ export async function burnCNft(
   console.log("[burnCNft] Instructions prepared:", JSON.stringify(instructions.map(ix => ({programId: ix.programId.toBase58(), keys: ix.keys.map(k=>k.pubkey.toBase58())})), null, 2));
   return sendTransaction(instructions, connection, wallet);
 }
+
