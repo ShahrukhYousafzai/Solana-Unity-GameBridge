@@ -79,10 +79,17 @@
     @apply border-border;
   }
   html, body {
-    @apply h-full m-0 p-0; /* Ensure full height and no margin/padding */
+    @apply h-full m-0 p-0 overflow-hidden; /* Ensure full height, no margin/padding, and hide scrollbars */
   }
   body {
     @apply bg-background text-foreground font-body antialiased;
-    @apply dark:bg-gray-900 dark:text-white; /* Default dark mode for game container */
+    /* Forcing dark theme as per game container preference, can be made dynamic later */
+    @apply dark; 
+    background-color: hsl(var(--background)); /* Explicitly set for dark mode */
+  }
+  #unity-canvas {
+    width: 100vw;
+    height: 100vh;
+    display: block; /* Remove any extra space below canvas */
   }
 }

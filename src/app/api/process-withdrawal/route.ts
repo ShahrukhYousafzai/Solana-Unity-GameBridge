@@ -5,13 +5,11 @@ import { getAssociatedTokenAddressSync, createTransferInstruction, TOKEN_PROGRAM
 import { getRpcUrl, type SupportedSolanaNetwork } from '@/config';
 import * as bs58 from 'bs58';
 
-// IMPORTANT FOR PRODUCTION:
-// The CUSTODIAL_WALLET_PRIVATE_KEY must be set as a secure environment variable
-// in your hosting environment (e.g., Firebase App Hosting secrets, or Cloud Function environment variables if deploying Next.js that way).
-// It should NOT be hardcoded here or committed to your repository if this were actual production code.
-// For local development, it's typically stored in .env.local (which should be gitignored).
-// Firebase (or your chosen hosting provider) makes this variable securely available
-// to this server-side code at runtime, without exposing it to the client.
+// This API route is a server-side component.
+// It securely accesses the CUSTODIAL_WALLET_PRIVATE_KEY environment variable.
+// This private key MUST be set in your hosting environment's secrets/environment variables
+// and should NEVER be exposed to the client-side.
+// For local development, set it in .env.local (which should be in .gitignore).
 
 export async function POST(request: Request) {
   try {
@@ -27,7 +25,7 @@ export async function POST(request: Request) {
     }: {
       tokenMint?: string;
       userWalletAddress: string;
-      netAmount: number; // Note: For SOL, this will be in lamports from the frontend payload
+      netAmount: number; // For SOL, this is in lamports; for SPL, it's token units.
       tokenDecimals?: number;
       tokenProgramId?: string;
       network: SupportedSolanaNetwork;
@@ -53,6 +51,7 @@ export async function POST(request: Request) {
     try {
       let privateKeyBytes: Uint8Array;
       try {
+        // Attempt to parse as JSON array of numbers (e.g., from Solflare export)
         const keyArray = JSON.parse(custodialWalletPrivateKeyString);
         if (Array.isArray(keyArray) && keyArray.every(num => typeof num === 'number')) {
           privateKeyBytes = Uint8Array.from(keyArray);
@@ -60,6 +59,7 @@ export async function POST(request: Request) {
           throw new Error("Parsed JSON is not an array of numbers.");
         }
       } catch (jsonError) {
+        // Fallback to base58 decoding if JSON parsing fails
         privateKeyBytes = bs58.decode(custodialWalletPrivateKeyString);
       }
       custodialKeypair = Keypair.fromSecretKey(privateKeyBytes);
@@ -68,7 +68,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, message: "Server configuration error: Invalid custodial wallet private key format." }, { status: 500 });
     }
 
-    const rpcUrl = getRpcUrl(network, process.env.NEXT_PUBLIC_HELIUS_API_KEY);
+    const rpcUrl = getRpcUrl(network, process.env.NEXT_PUBLIC_HELIUS_API_KEY); // Can use Helius here too if server has access
     const connection = new Connection(rpcUrl, 'confirmed');
     const recipientPublicKey = new PublicKey(userWalletAddress);
     const instructions = [];
@@ -76,8 +76,8 @@ export async function POST(request: Request) {
     let withdrawalTypeMessage: string;
 
     if (isSolWithdrawal) {
-      // SOL Withdrawal
-      const lamportsToWithdraw = BigInt(netAmount); // netAmount is already in lamports for SOL
+      // SOL Withdrawal - netAmount is already in lamports
+      const lamportsToWithdraw = BigInt(netAmount);
       if (lamportsToWithdraw <= BigInt(0)) {
         return NextResponse.json({ success: false, message: "SOL withdrawal amount must be positive." }, { status: 400 });
       }
@@ -91,10 +91,11 @@ export async function POST(request: Request) {
       withdrawalTypeMessage = `Withdrawal of ${Number(lamportsToWithdraw) / LAMPORTS_PER_SOL} SOL processed successfully.`;
 
     } else if (tokenMint && typeof tokenDecimals === 'number' && tokenProgramId) {
-      // SPL Token Withdrawal
+      // SPL Token Withdrawal - netAmount is in token units
       const mintPublicKey = new PublicKey(tokenMint);
       const splTokenProgramId = new PublicKey(tokenProgramId);
-      const rawAmount = BigInt(Math.round(netAmount * (10 ** tokenDecimals))); // netAmount is in token units
+      // Convert netAmount (token units) to raw amount using tokenDecimals
+      const rawAmount = BigInt(Math.round(netAmount * (10 ** tokenDecimals))); 
 
       if (rawAmount <= BigInt(0)) {
         return NextResponse.json({ success: false, message: "Token withdrawal amount must be positive." }, { status: 400 });
@@ -107,9 +108,9 @@ export async function POST(request: Request) {
       if (!recipientAtaInfo) {
         instructions.push(
           createAssociatedTokenAccountInstruction(
-            custodialKeypair.publicKey,
+            custodialKeypair.publicKey, // Payer for ATA creation
             recipientAta,
-            recipientPublicKey,
+            recipientPublicKey, // Owner of the new ATA
             mintPublicKey,
             splTokenProgramId
           )
@@ -120,13 +121,13 @@ export async function POST(request: Request) {
         createTransferInstruction(
           sourceAta,
           recipientAta,
-          custodialKeypair.publicKey,
+          custodialKeypair.publicKey, // Authority to transfer from source (custodial wallet)
           rawAmount,
           [],
           splTokenProgramId
         )
       );
-      withdrawalTypeMessage = `Withdrawal of ${netAmount} ${tokenMint.substring(0,4)}... processed successfully.`;
+      withdrawalTypeMessage = `Withdrawal of ${netAmount} of token ${tokenMint.substring(0,4)}... processed successfully.`;
     } else {
        return NextResponse.json({ success: false, message: "Invalid withdrawal type or missing parameters." }, { status: 400 });
     }
@@ -140,7 +141,7 @@ export async function POST(request: Request) {
     }).compileToV0Message();
 
     const transaction = new VersionedTransaction(messageV0);
-    transaction.sign([custodialKeypair]);
+    transaction.sign([custodialKeypair]); // Sign with the custodial wallet's keypair
 
     const signature = await connection.sendTransaction(transaction, { skipPreflight: false });
     await connection.confirmTransaction({
@@ -158,7 +159,7 @@ export async function POST(request: Request) {
   } catch (error: any) {
     console.error("Error processing withdrawal:", error);
     let errorMessage = "Failed to process withdrawal.";
-    if (error.logs) {
+    if (error.logs) { // SendTransactionError might have logs
       errorMessage += ` Logs: ${JSON.stringify(error.logs)}`;
     } else if (error.message) {
       errorMessage += ` Error: ${error.message}`;

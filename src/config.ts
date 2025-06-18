@@ -17,16 +17,17 @@ export const CUSTODIAL_WALLET_ADDRESS = process.env.NEXT_PUBLIC_CUSTODIAL_WALLET
 export const CUSTODIAL_WALLET_PRIVATE_KEY_FOR_SERVER = process.env.CUSTODIAL_WALLET_PRIVATE_KEY;
 
 
-export type SupportedSolanaNetwork = 'mainnet-beta' | 'devnet';
+export type SupportedSolanaNetwork = 'mainnet-beta' | 'devnet' | 'testnet';
 
-export const DEFAULT_NETWORK: SupportedSolanaNetwork = 'mainnet-beta';
+export const DEFAULT_NETWORK: SupportedSolanaNetwork = 'devnet'; // Defaulting to devnet for easier testing
 
 export const getRpcUrl = (network: SupportedSolanaNetwork, apiKey: string | undefined): string => {
   if (!apiKey) {
     console.warn("Helius API key is not defined. Falling back to public RPCs, which might be rate-limited or less reliable.");
     if (network === 'mainnet-beta') return "https://api.mainnet-beta.solana.com";
     if (network === 'devnet') return "https://api.devnet.solana.com";
-    return "https://api.mainnet-beta.solana.com"; // Default fallback
+    if (network === 'testnet') return "https://api.testnet.solana.com";
+    return "https://api.devnet.solana.com"; // Default fallback
   }
   if (network === 'mainnet-beta') {
     return `https://mainnet.helius-rpc.com/?api-key=${apiKey}`;
@@ -34,10 +35,16 @@ export const getRpcUrl = (network: SupportedSolanaNetwork, apiKey: string | unde
   if (network === 'devnet') {
     return `https://devnet.helius-rpc.com/?api-key=${apiKey}`;
   }
-  console.warn(`Unsupported network ${network} with Helius API key. Falling back to public Mainnet RPC.`);
-  return "https://api.mainnet-beta.solana.com";
+  if (network === 'testnet') {
+    // Helius might not have a direct testnet RPC named 'testnet', often it's devnet.
+    // Adjust if Helius provides a specific testnet endpoint. For now, falling back to public.
+    console.warn("Helius Testnet RPC not explicitly configured, falling back to public testnet RPC.");
+    return "https://api.testnet.solana.com";
+  }
+  console.warn(`Unsupported network ${network} with Helius API key. Falling back to public Devnet RPC.`);
+  return "https://api.devnet.solana.com";
 };
 
-export const SOL_BURN_ADDRESS = "11111111111111111111111111111111";
+export const SOL_BURN_ADDRESS = "1nc1nerator11111111111111111111111111111111";
 export const SOL_DECIMALS = 9;
-
+export const WITHDRAWAL_TAX_PERCENTAGE = 5; // 5%

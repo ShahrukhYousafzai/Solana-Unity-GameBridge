@@ -1,51 +1,29 @@
+
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Loading() {
+  // Fullscreen loading state, similar to how the game itself will be displayed
   return (
-    <div className="flex flex-col min-h-screen">
-      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container flex h-20 items-center justify-between px-4 md:px-6">
-          <div className="flex items-center gap-2">
-            <Skeleton className="h-8 w-8 rounded" />
-            <Skeleton className="h-7 w-24" />
+    <div className="flex flex-col min-h-screen bg-gray-900 text-white items-center justify-center">
+      <header className="absolute top-0 left-0 right-0 z-[100] w-full border-b border-gray-700 bg-gray-800/95 backdrop-blur supports-[backdrop-filter]:bg-gray-800/60">
+        <div className="container flex h-16 items-center justify-between px-4 md:px-6 mx-auto">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Skeleton className="h-8 w-8 rounded-md bg-gray-700" />
+              <Skeleton className="h-7 w-32 bg-gray-700" />
+            </div>
+            <Skeleton className="h-10 w-36 rounded-md bg-gray-700" />
           </div>
-          <Skeleton className="h-10 w-32 rounded-md" />
+          <Skeleton className="h-10 w-32 rounded-md bg-gray-700" />
         </div>
       </header>
-      <main className="flex-1 container mx-auto p-4 md:p-6 space-y-8">
-        <section className="space-y-4">
-          <Skeleton className="h-8 w-48" />
-          <Skeleton className="h-16 w-full rounded-lg" />
-        </section>
-        <section>
-          <Skeleton className="h-[400px] w-full rounded-lg" />
-        </section>
-        <section>
-          <div className="border rounded-lg p-4">
-            <Skeleton className="h-8 w-1/3 mb-4" />
-            <div className="grid grid-cols-3 gap-2 mb-4">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="border rounded-lg p-2">
-                  <Skeleton className="h-6 w-3/4 mb-2" />
-                  <Skeleton className="aspect-square w-full mb-2" />
-                  <Skeleton className="h-4 w-1/2" />
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-      </main>
-      <footer className="py-6 border-t">
-        <div className="container text-center">
-          <Skeleton className="h-4 w-1/4 mx-auto mb-1" />
-          <Skeleton className="h-4 w-1/3 mx-auto" />
-        </div>
-      </footer>
+      <div className="text-center">
+        <svg className="animate-spin h-12 w-12 text-primary mx-auto mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <p className="text-xl">Loading Application...</p>
+      </div>
     </div>
   );
 }
