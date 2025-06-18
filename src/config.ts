@@ -12,6 +12,8 @@ export const CUSTODIAL_WALLET_ADDRESS = process.env.NEXT_PUBLIC_CUSTODIAL_WALLET
 // or in your hosting provider's secret management for production).
 // It MUST NOT be prefixed with NEXT_PUBLIC_ for security.
 // The API route /api/process-withdrawal/route.ts uses process.env.CUSTODIAL_WALLET_PRIVATE_KEY.
+// Ensure this value (CUSTODIAL_WALLET_PRIVATE_KEY) is defined in your .env.local for local development,
+// or as a secret in your production hosting environment.
 export const CUSTODIAL_WALLET_PRIVATE_KEY_FOR_SERVER = process.env.CUSTODIAL_WALLET_PRIVATE_KEY;
 
 
@@ -35,3 +37,4 @@ export const getRpcUrl = (network: SupportedSolanaNetwork, apiKey: string | unde
   console.warn(`Unsupported network ${network} with Helius API key. Falling back to public Mainnet RPC.`);
   return "https://api.mainnet-beta.solana.com";
 };
+
