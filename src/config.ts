@@ -1,16 +1,20 @@
 
-import type { WalletAdapterNetwork } from "@solana/wallet-adapter-base";
-
 // This is where the Helius API key is read from the environment variables.
 // Ensure NEXT_PUBLIC_HELIUS_API_KEY is set in your .env.local file.
 export const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY; 
+
 // This is where the Custodial Wallet Address is read from environment variables.
 // Ensure NEXT_PUBLIC_CUSTODIAL_WALLET_ADDRESS is set in your .env.local file.
 export const CUSTODIAL_WALLET_ADDRESS = process.env.NEXT_PUBLIC_CUSTODIAL_WALLET_ADDRESS;
+// Server-side private key for the custodial wallet.
+// IMPORTANT: This should be set in your server environment variables, NOT prefixed with NEXT_PUBLIC_ for security.
+// For local development, you can add it to .env.local (e.g., CUSTODIAL_WALLET_PRIVATE_KEY=your_base58_encoded_private_key)
+// but ensure .env.local is in .gitignore and this key is managed securely in production.
+export const CUSTODIAL_WALLET_PRIVATE_KEY_FOR_SERVER = process.env.CUSTODIAL_WALLET_PRIVATE_KEY;
 
-export type SupportedSolanaNetwork = 'mainnet-beta' | 'devnet'; // Using string literals for type safety
 
-// Using string literal for DEFAULT_NETWORK to avoid SSR issues with enum access.
+export type SupportedSolanaNetwork = 'mainnet-beta' | 'devnet';
+
 export const DEFAULT_NETWORK: SupportedSolanaNetwork = 'mainnet-beta';
 
 export const getRpcUrl = (network: SupportedSolanaNetwork, apiKey: string | undefined): string => {
@@ -26,8 +30,6 @@ export const getRpcUrl = (network: SupportedSolanaNetwork, apiKey: string | unde
   if (network === 'devnet') {
     return `https://devnet.helius-rpc.com/?api-key=${apiKey}`;
   }
-  // Fallback or throw error for unsupported networks if HELIUS_API_KEY is present
   console.warn(`Unsupported network ${network} with Helius API key. Falling back to public Mainnet RPC.`);
   return "https://api.mainnet-beta.solana.com";
 };
-

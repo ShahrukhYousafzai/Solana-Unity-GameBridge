@@ -9,7 +9,7 @@ import {
   TransactionInstruction,
   type SendTransactionError, 
   type Commitment,
-  Keypair, // Added Keypair
+  Keypair, 
 } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
@@ -22,7 +22,7 @@ import {
 } from "@solana/spl-token";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import type { Nft, CNft, SplToken } from "@/types/solana";
-import type { SupportedSolanaNetwork } from "@/config"; // Added
+import type { SupportedSolanaNetwork } from "@/config";
 import {
   PROGRAM_ID as BUBBLEGUM_PROGRAM_ID,
   createBurnInstruction as createBubblegumBurnInstruction,
@@ -42,7 +42,7 @@ async function sendTransaction(
   instructions: TransactionInstruction[],
   connection: Connection,
   wallet: WalletContextState,
-  signers?: Keypair[] // Optional signers for server-side transactions
+  signers?: Keypair[] 
 ): Promise<string> {
   const payerPublicKey = wallet.publicKey;
   const signTransactionFn = wallet.signTransaction;
@@ -85,7 +85,6 @@ async function sendTransaction(
 
     const versionedTransaction = new VersionedTransaction(messageV0);
     
-    // Add extra signers if provided (for server-side signing with custodial wallet)
     if (signers && signers.length > 0) {
       versionedTransaction.sign(signers);
     }
@@ -470,7 +469,7 @@ export async function depositSplToken(
   wallet: WalletContextState,
   token: SplToken,
   amount: number,
-  custodialWalletAddressString: string
+  custodialWalletAddressString: string | undefined
 ): Promise<string> {
   const ownerPublicKey = wallet.publicKey;
   if (!ownerPublicKey) throw new Error("Wallet not connected for deposit.");
@@ -529,15 +528,14 @@ export interface WithdrawalResponse {
 export async function initiateWithdrawalRequest(
   token: SplToken,
   userWalletAddress: string,
-  netAmountToUser: number, // Amount user receives after tax
+  netAmountToUser: number, 
   currentNetwork: SupportedSolanaNetwork
 ): Promise<WithdrawalResponse> {
   console.log(`[initiateWithdrawalRequest] User ${userWalletAddress} requested withdrawal of ${token.name} (${token.symbol}).`);
   console.log(`  Net Amount to User (after tax): ${netAmountToUser} ${token.symbol}`);
-  console.log(`  Token Mint: ${token.id}`);
+  console.log(`  Token Mint: ${token.id}, Decimals: ${token.decimals}, Program ID: ${token.tokenProgramId}`);
   console.log(`  Network: ${currentNetwork}`);
-  console.log("  IMPORTANT: This will call a Next.js API route to securely process the withdrawal from the custodial wallet.");
-
+  
   try {
     const response = await fetch('/api/process-withdrawal', {
       method: 'POST',
