@@ -16,6 +16,11 @@ export const CUSTODIAL_WALLET_ADDRESS = process.env.NEXT_PUBLIC_CUSTODIAL_WALLET
 // or as a secret in your production hosting environment.
 export const CUSTODIAL_WALLET_PRIVATE_KEY_FOR_SERVER = process.env.CUSTODIAL_WALLET_PRIVATE_KEY;
 
+// Base name for Unity WebGL build files.
+// Ensure this matches your Unity "Product Name" when "Name Files As Hashes" is disabled.
+// Unity will generate files like YourGameName.loader.js, YourGameName.data, etc.
+export const UNITY_GAME_BUILD_BASE_NAME = process.env.NEXT_PUBLIC_UNITY_GAME_BUILD_BASE_NAME || "MyGame";
+
 
 export type SupportedSolanaNetwork = 'mainnet-beta' | 'devnet' | 'testnet';
 
@@ -48,3 +53,4 @@ export const getRpcUrl = (network: SupportedSolanaNetwork, apiKey: string | unde
 export const SOL_BURN_ADDRESS = "1nc1nerator11111111111111111111111111111111";
 export const SOL_DECIMALS = 9;
 export const WITHDRAWAL_TAX_PERCENTAGE = 5; // 5%
+

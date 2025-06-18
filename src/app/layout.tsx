@@ -6,10 +6,11 @@ import '@solana/wallet-adapter-react-ui/styles.css';
 import { WalletContextProvider } from '@/contexts/WalletContextProvider';
 import { NetworkProvider } from '@/contexts/NetworkContext';
 import { Toaster } from '@/components/ui/toaster';
+import { UNITY_GAME_BUILD_BASE_NAME } from '@/config';
 
 export const metadata: Metadata = {
-  title: 'SolBlaze GameBridge',
-  description: 'Manage your Solana assets within your Unity game via SolBlaze.',
+  title: 'Solana Unity GameBridge',
+  description: 'Manage your Solana assets within your Unity game.',
 };
 
 export default function RootLayout({
@@ -26,11 +27,11 @@ export default function RootLayout({
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
         {/* 
           This script tag loads the Unity WebGL loader.
-          Ensure 'UnityLoader.js' (or the actual name of your loader script, e.g., YourGameName.loader.js)
-          is present in your `public/Build/` directory.
-          The `strategy="beforeInteractive"` is important for it to load early.
+          It now dynamically uses UNITY_GAME_BUILD_BASE_NAME.
+          Example: If UNITY_GAME_BUILD_BASE_NAME is "GearHeadRacing", this will load "/Build/GearHeadRacing.loader.js".
+          Ensure this loader script name matches what your Unity build generates when "Name Files As Hashes" is disabled.
         */}
-        <Script src="/Build/UnityLoader.js" strategy="beforeInteractive" />
+        <Script src={`/Build/${UNITY_GAME_BUILD_BASE_NAME}.loader.js`} strategy="beforeInteractive" />
       </head>
       <body className="font-body antialiased bg-background text-foreground overflow-hidden">
         <NetworkProvider>
@@ -43,5 +44,4 @@ export default function RootLayout({
     </html>
   );
 }
-
     
