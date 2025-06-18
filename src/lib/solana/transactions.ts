@@ -42,9 +42,8 @@ import { CUSTODIAL_WALLET_ADDRESS, SOL_BURN_ADDRESS, SOL_DECIMALS, WITHDRAWAL_TA
 import { createUmi } from '@metaplex-foundation/umi-bundle-defaults';
 import { walletAdapterIdentity } from '@metaplex-foundation/umi-signer-wallet-adapters';
 import { mplTokenMetadata } from '@metaplex-foundation/mpl-token-metadata';
-import {行为包gum} from '@metaplex-foundation/mpl-bubblegum';
-import { процент } from '@metaplex-foundation/umi';
-import { generateSigner, transactionBuilder, some } from '@metaplex-foundation/umi';
+// import {行为包gum} from '@metaplex-foundation/mpl-bubblegum'; // This seems to be a typo or non-English name, UMI typically uses English names for packages/modules
+import { percentAmount, generateSigner, transactionBuilder, some } from '@metaplex-foundation/umi';
 
 
 async function sendTransaction(
@@ -135,7 +134,7 @@ async function sendTransaction(
   } catch (error: any) {
     let logsContent: string[] | null = null;
 
-    if (error instanceof SendTransactionError) { // This was the missing import
+    if (error instanceof SendTransactionError) { 
       logsContent = error.logs;
     } else if (typeof error.getLogs === 'function') {
       try {
@@ -711,30 +710,18 @@ export async function mintStandardNft(
         name: name,
         symbol: symbol,
         uri: metadataUri,
-        sellerFeeBasisPoints: процент(5.5, 2), // Example 5.5% royalty
+        sellerFeeBasisPoints: percentAmount(5.5, 2), // Example 5.5% royalty
         isCollection: false,
         // tokenStandard: mplTokenMetadata.TokenStandard.NonFungible, // Default for createV1
       })
     );
   
-  // The old way of sending:
-  // const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-  // const transaction = txBuilder.setFeePayer(umi.identity.publicKey).toTransaction({
-  //   blockhash,
-  //   lastValidBlockHeight,
-  //   feePayer: umi.identity.publicKey
-  // });
-  // const signedTransaction = await wallet.signTransaction(transaction);
-  // const signature = await connection.sendRawTransaction(signedTransaction.serialize());
-
   const { blockhash, lastValidBlockHeight } = await umi.rpc.getLatestBlockhash();
   let transaction = txBuilder.setFeePayer(umi.identity).toLegacyVersionedTransaction({
       blockhash,
       lastValidBlockHeight,
   });
   
-  // UMI's walletAdapterIdentity should handle signing.
-  // If direct signing is needed for VersionedTransaction through WalletContextState:
   const signedTransaction = await wallet.signTransaction(transaction);
   
   const signatureBytes = await umi.rpc.sendTransaction(signedTransaction);
@@ -749,3 +736,4 @@ export async function mintStandardNft(
   console.log(`[mintStandardNft] NFT minted: ${mint.publicKey}. Signature: ${signature}`);
   return signature;
 }
+
