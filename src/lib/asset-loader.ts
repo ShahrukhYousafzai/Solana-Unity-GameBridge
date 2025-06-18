@@ -30,15 +30,14 @@ const searchHeliusAssets = async (ownerAddress: string, rpcUrl: string): Promise
   try {
     const result = await callHeliusApi(rpcUrl, {
       jsonrpc: "2.0",
-      id: "solblaze-searchAssets-all", 
+      id: "solblaze-searchAssets-all-types", 
       method: "searchAssets",
       params: {
         ownerAddress,
         page: 1, 
         limit: 1000,
-        tokenType: "all", // Fetch all types: fungible, non-fungible, compressed NFTs
-        displayOptions: {
-          showFungible: true, 
+        tokenType: "all", 
+        displayOptions: { 
           showNativeBalance: false, 
           showUnverifiedCollections: true, 
           showCollectionMetadata: true, 
@@ -72,6 +71,7 @@ const normalizeHeliusAssetToAppAsset = (heliusAsset: HeliusAsset): Asset | null 
 
   // Compressed NFTs
   if (heliusAsset.compression?.compressed) {
+    console.log(`[AssetLoader] Normalizing as cNFT: ${heliusAsset.id} (Name: ${commonName || 'N/A'})`);
     const cNftName = commonName || `Compressed Asset ${heliusAsset.id.substring(0, 6)}...`;
     return {
       id: heliusAsset.id,
@@ -94,6 +94,7 @@ const normalizeHeliusAssetToAppAsset = (heliusAsset: HeliusAsset): Asset | null 
 
   // Standard NFTs
   if (heliusAsset.interface === "V1_NFT" || heliusAsset.interface === "ProgrammableNFT" || heliusAsset.interface === "V1_PRINT" || heliusAsset.interface === "IdentityNFT" || heliusAsset.interface === "ExecutableNFT" || heliusAsset.interface === "Inscription") {
+    console.log(`[AssetLoader] Normalizing as NFT: ${heliusAsset.id} (Name: ${commonName || 'N/A'}, Interface: ${heliusAsset.interface})`);
     const nftName = commonName || `NFT ${heliusAsset.id.substring(0, 6)}...`;
     return {
       id: heliusAsset.id,
@@ -112,8 +113,9 @@ const normalizeHeliusAssetToAppAsset = (heliusAsset: HeliusAsset): Asset | null 
   
   // Fungible Tokens (SPL & Token-2022)
   if (heliusAsset.interface === "FungibleAsset" || heliusAsset.interface === "FungibleToken" || heliusAsset.token_info || heliusAsset.spl_token_info) {
+    console.log(`[AssetLoader] Attempting to normalize as Token: ${heliusAsset.id} (Name: ${commonName || 'N/A'}, Interface: ${heliusAsset.interface})`);
     const tokenInfo = heliusAsset.token_info;
-    const splTokenInfo = heliusAsset.spl_token_info; // For potential fallback if token_info is sparse
+    const splTokenInfo = heliusAsset.spl_token_info;
 
     let decimals: number;
     let balance: number; // UI balance
@@ -121,21 +123,24 @@ const normalizeHeliusAssetToAppAsset = (heliusAsset: HeliusAsset): Asset | null 
     let tokenAccount: string | undefined = heliusAsset.ownership.token_account;
 
     if (tokenInfo) { 
+      console.log(`[AssetLoader] Using token_info for ${heliusAsset.id}:`, tokenInfo);
       decimals = tokenInfo.decimals;
       balance = tokenInfo.balance; 
       if (typeof tokenInfo.raw_token_amount === 'string' && tokenInfo.raw_token_amount.length > 0) {
         rawBalanceBigInt = BigInt(tokenInfo.raw_token_amount);
       } else {
+        console.warn(`[AssetLoader] token_info for ${heliusAsset.id} missing raw_token_amount or it's empty. Calculating from UI balance. This might lead to precision loss.`);
         rawBalanceBigInt = BigInt(Math.round(balance * (10 ** decimals)));
       }
       if (!tokenAccount && tokenInfo.token_program) tokenAccount = heliusAsset.ownership.owner; 
     } else if (splTokenInfo) { 
+      console.log(`[AssetLoader] Using spl_token_info for ${heliusAsset.id}:`, splTokenInfo);
       decimals = splTokenInfo.decimals;
       rawBalanceBigInt = BigInt(splTokenInfo.balance); 
       balance = Number(rawBalanceBigInt) / (10 ** decimals);
       tokenAccount = splTokenInfo.token_account || heliusAsset.ownership.owner;
     } else {
-      console.warn(`[AssetLoader] Asset ${heliusAsset.id} (Interface: ${heliusAsset.interface}) looks like a token but lacks token_info and spl_token_info. Skipping.`);
+      console.warn(`[AssetLoader] Asset ${heliusAsset.id} (Interface: ${heliusAsset.interface}) looks like a token but lacks both token_info and spl_token_info. Skipping.`);
       return null;
     }
 
@@ -148,6 +153,7 @@ const normalizeHeliusAssetToAppAsset = (heliusAsset: HeliusAsset): Asset | null 
     const tokenSymbolFromMeta = commonSymbol || tokenInfo?.symbol;
     const tokenSymbol = tokenSymbolFromMeta ? tokenSymbolFromMeta : heliusAsset.id.substring(0, 4).toUpperCase();
     
+    console.log(`[AssetLoader] Successfully normalized as Token: ${tokenName} (${tokenSymbol}), Balance: ${balance}`);
     return {
       id: heliusAsset.id, // Mint address
       name: tokenName,
@@ -163,12 +169,13 @@ const normalizeHeliusAssetToAppAsset = (heliusAsset: HeliusAsset): Asset | null 
     } as SplToken;
   }
   
-  console.log(`[AssetLoader] Asset ${heliusAsset.id} did not match any known normalization rules. Interface: ${heliusAsset.interface}, Compression: ${heliusAsset.compression?.compressed}`);
+  console.log(`[AssetLoader] Asset ${heliusAsset.id} did not match any known normalization rules. Interface: ${heliusAsset.interface}, Compression: ${heliusAsset.compression?.compressed}, TokenInfo: ${!!heliusAsset.token_info}, SplTokenInfo: ${!!heliusAsset.spl_token_info}`);
   return null;
 };
 
 
 export const fetchHeliusAssetProof = async (assetId: string, rpcUrl: string): Promise<HeliusAssetProof | null> => {
+  console.log(`[AssetLoader/Proof] Fetching Helius asset proof for asset ID: ${assetId} using RPC: ${rpcUrl}`);
   try {
     const result = await callHeliusApi(rpcUrl, {
       jsonrpc: '2.0',
@@ -180,10 +187,15 @@ export const fetchHeliusAssetProof = async (assetId: string, rpcUrl: string): Pr
       console.warn(`[AssetLoader/Proof] No valid asset proof returned from Helius for asset ID: ${assetId}. Result:`, result);
       return null;
     }
+    console.log(`[AssetLoader/Proof] Successfully fetched asset proof for ${assetId}.`);
     return result as HeliusAssetProof;
   } catch (error) {
-    console.error(`[AssetLoader/Proof] Error fetching Helius asset proof for ${assetId}:`, error);
-    throw error; 
+    // Error already logged by callHeliusApi if it's an API error.
+    // If it's another type of error, log it here.
+    if (!(error instanceof Error && error.message.startsWith("Helius API Error:"))) {
+        console.error(`[AssetLoader/Proof] Error fetching Helius asset proof for ${assetId}:`, error);
+    }
+    throw error; // Re-throw to be caught by the caller if needed
   }
 };
 
@@ -191,8 +203,8 @@ export const fetchHeliusAssetProof = async (assetId: string, rpcUrl: string): Pr
 export async function fetchAssetsForOwner(
   ownerAddressString: string,
   rpcUrl: string,
-  connection: Connection, // Kept for potential direct UMI/RPC calls if needed later, not used currently
-  wallet: WalletContextState // Kept for potential UMI identity if needed later
+  connection: Connection, 
+  wallet: WalletContextState 
 ): Promise<{ nfts: Nft[]; cnfts: CNft[]; tokens: SplToken[]; heliusWarning?: string }> {
   const nfts: Nft[] = [];
   const cnfts: CNft[] = [];
@@ -213,22 +225,21 @@ export async function fetchAssetsForOwner(
         } else if (appAsset.type === "cnft") {
           cnfts.push(appAsset);
         } else if (appAsset.type === "token") {
-          if (appAsset.rawBalance > BigInt(0)) {
+          if (appAsset.rawBalance > BigInt(0)) { // Ensure zero balance tokens are not pushed
             tokens.push(appAsset);
           } else {
-            console.log(`[AssetLoader] fetchAssetsForOwner: Filtered out zero balance token post-normalization: ${appAsset.name} (${appAsset.id})`);
+            console.log(`[AssetLoader] Filtered out zero balance token post-normalization: ${appAsset.name} (${appAsset.id})`);
           }
         }
       }
     }
   } catch (error: any) {
-    if (error.message && error.message.startsWith("Helius API Error:")) {
-      heliusWarning = error.message;
-    } else {
-      heliusWarning = "Failed to load assets from Helius: " + (error.message || "Unknown error");
-    }
+    // The error message is constructed in callHeliusApi
+    heliusWarning = error.message || "Failed to load assets from Helius due to an unknown error.";
+    // No need to console.error here as callHeliusApi or searchHeliusAssets would have logged the specifics.
   }
 
   console.log(`[AssetLoader] Asset fetch complete. NFTs: ${nfts.length}, cNFTs: ${cnfts.length}, Tokens: ${tokens.length}. Helius Warning: ${heliusWarning || 'None'}`);
   return { nfts, cnfts, tokens, heliusWarning };
 }
+
