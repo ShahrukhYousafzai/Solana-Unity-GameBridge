@@ -7,7 +7,7 @@ import {
   TransactionMessage,
   type AccountMeta,
   TransactionInstruction,
-  type SendTransactionError, // Import SendTransactionError
+  type SendTransactionError, 
   type Commitment,
 } from "@solana/web3.js";
 import {
@@ -33,6 +33,7 @@ import {
 import { fetchHeliusAssetProof } from "@/lib/asset-loader"; 
 import BN from 'bn.js';
 import * as bs58 from "bs58";
+import { CUSTODIAL_WALLET_ADDRESS } from "@/config";
 
 
 async function sendTransaction(
@@ -121,10 +122,10 @@ async function sendTransaction(
     } else if (typeof error.getLogs === 'function') {
       try {
         const potentialLogs = error.getLogs();
-        if (Array.isArray(potentialLogs)) {
-          logsContent = potentialLogs.filter((l: any) => typeof l === 'string');
+        if (Array.isArray(potentialLogs) && potentialLogs.every(l => typeof l === 'string')) {
+          logsContent = potentialLogs as string[];
         } else if (potentialLogs !== null && potentialLogs !== undefined) {
-          console.warn("[sendTransaction] error.getLogs() did not return an array or null:", potentialLogs);
+          console.warn("[sendTransaction] error.getLogs() did not return an array of strings or null:", potentialLogs);
         }
       } catch (e) {
         console.warn("[sendTransaction] Failed to execute or process error.getLogs():", e);
@@ -349,7 +350,6 @@ export async function transferCNft(
 
   if (typeof compression.data_hash !== 'string' || !compression.data_hash.trim()) throw new Error("Compression data_hash missing/invalid.");
   if (typeof compression.creator_hash !== 'string' || !compression.creator_hash.trim()) throw new Error("Compression creator_hash missing/invalid.");
-  // Leaf ID can be 0, so checking for typeof 'number' is correct.
   if (typeof compression.leaf_id !== 'number') throw new Error("Compression leaf_id missing/invalid (not a number).");
   
   const assetProof = await fetchHeliusAssetProof(cnft.id, rpcUrl);
@@ -412,7 +412,6 @@ export async function burnCNft(
 
   if (typeof compression.data_hash !== 'string' || !compression.data_hash.trim()) throw new Error("Compression data_hash missing/invalid for burn.");
   if (typeof compression.creator_hash !== 'string' || !compression.creator_hash.trim()) throw new Error("Compression creator_hash missing/invalid for burn.");
-  // Leaf ID can be 0, so checking for typeof 'number' is correct.
   if (typeof compression.leaf_id !== 'number') throw new Error("Compression leaf_id missing/invalid (not a number) for burn.");
 
   const assetProof = await fetchHeliusAssetProof(cnft.id, rpcUrl);
@@ -457,3 +456,93 @@ export async function burnCNft(
   return sendTransaction(instructions, connection, wallet);
 }
 
+export async function depositSplToken(
+  connection: Connection,
+  wallet: WalletContextState,
+  token: SplToken,
+  amount: number,
+  custodialWalletAddressString: string
+): Promise<string> {
+  const ownerPublicKey = wallet.publicKey;
+  if (!ownerPublicKey) throw new Error("Wallet not connected for deposit.");
+  if (!custodialWalletAddressString) throw new Error("Custodial wallet address not configured for deposit.");
+  
+  let custodialPublicKey: PublicKey;
+  try {
+    custodialPublicKey = new PublicKey(custodialWalletAddressString);
+  } catch (e) {
+    throw new Error("Invalid custodial wallet address format for deposit.");
+  }
+
+  const mintPublicKey = new PublicKey(token.id);
+  const tokenProgramPk = new PublicKey(token.tokenProgramId);
+  const rawAmount = BigInt(Math.round(amount * (10 ** token.decimals)));
+
+  const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey, false, tokenProgramPk);
+  const recipientAta = getAssociatedTokenAddressSync(mintPublicKey, custodialPublicKey, false, tokenProgramPk);
+
+  const instructions: TransactionInstruction[] = [];
+
+  const recipientAtaInfo = await connection.getAccountInfo(recipientAta);
+  if (!recipientAtaInfo) {
+    instructions.push(
+      createAssociatedTokenAccountInstruction(
+        ownerPublicKey, 
+        recipientAta,   
+        custodialPublicKey, 
+        mintPublicKey,  
+        tokenProgramPk  
+      )
+    );
+  }
+
+  instructions.push(
+    createSplTransferInstruction(
+      sourceAta,
+      recipientAta,
+      ownerPublicKey,
+      rawAmount,
+      [],
+      tokenProgramPk 
+    )
+  );
+  console.log("[depositSplToken] Instructions prepared for deposit:", JSON.stringify(instructions.map(ix => ({programId: ix.programId.toBase58(), keys: ix.keys.map(k=>k.pubkey.toBase58())})), null, 2));
+  return sendTransaction(instructions, connection, wallet);
+}
+
+// Placeholder for withdrawal - actual withdrawal from custodial wallet requires backend signing
+export async function initiateWithdrawalRequest(
+  token: SplToken,
+  userWalletAddress: string,
+  grossAmount: number,
+  netAmountToUser: number
+): Promise<{success: boolean, message: string}> {
+  console.log(`[initiateWithdrawalRequest] User ${userWalletAddress} requested withdrawal of ${token.name} (${token.symbol}).`);
+  console.log(`  Gross Amount: ${grossAmount} ${token.symbol}`);
+  console.log(`  Tax (5%): ${grossAmount - netAmountToUser} ${token.symbol}`);
+  console.log(`  Net Amount to User: ${netAmountToUser} ${token.symbol}`);
+  console.log(`  Token Mint: ${token.id}`);
+  console.log("  IMPORTANT: This is a frontend placeholder. A backend service is required to securely sign and dispatch this transaction from the custodial wallet.");
+  
+  // In a real application, you would make an API call to your backend here.
+  // Example:
+  // const response = await fetch('/api/request-withdrawal', {
+  //   method: 'POST',
+  //   headers: { 'Content-Type': 'application/json' },
+  //   body: JSON.stringify({
+  //     tokenMint: token.id,
+  //     userWalletAddress,
+  //     netAmount: netAmountToUser, // Send net amount or let backend calculate
+  //     tokenDecimals: token.decimals,
+  //     tokenProgramId: token.tokenProgramId
+  //   }),
+  // });
+  // if (!response.ok) {
+  //   const errorData = await response.json();
+  //   return { success: false, message: errorData.message || "Backend withdrawal request failed." };
+  // }
+  // const result = await response.json();
+  // return { success: true, message: result.message || "Withdrawal request submitted." };
+
+  return { success: true, message: "Withdrawal request has been logged. The team will process it shortly." };
+}

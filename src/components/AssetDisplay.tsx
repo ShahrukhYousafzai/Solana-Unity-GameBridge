@@ -5,7 +5,7 @@ import type { Asset, Nft, CNft, SplToken } from "@/types/solana";
 import Image from "next/image";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ExternalLink, Copy, Send, Trash2 } from "lucide-react";
+import { ExternalLink, Copy, Send, Trash2, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
 import { getAddressExplorerUrl } from "@/utils/explorer";
 import { useToast } from "@/hooks/use-toast";
 import type { SupportedSolanaNetwork } from "@/config"; 
@@ -14,11 +14,13 @@ interface AssetDisplayProps {
   asset: Asset;
   onTransferClick: () => void;
   onBurnClick: () => void;
+  onDepositClick?: () => void; // Optional for SplToken
+  onWithdrawClick?: () => void; // Optional for SplToken
   currentNetwork: SupportedSolanaNetwork;
   isActionDisabled?: boolean; 
 }
 
-export const AssetDisplay: React.FC<AssetDisplayProps> = ({ asset, onTransferClick, onBurnClick, currentNetwork, isActionDisabled = false }) => {
+export const AssetDisplay: React.FC<AssetDisplayProps> = ({ asset, onTransferClick, onBurnClick, onDepositClick, onWithdrawClick, currentNetwork, isActionDisabled = false }) => {
   const { toast } = useToast();
 
   const copyToClipboard = (text: string, label: string) => {
@@ -135,13 +137,23 @@ export const AssetDisplay: React.FC<AssetDisplayProps> = ({ asset, onTransferCli
                 </div>
             )}
 
-            <div className="flex gap-3 pt-4">
-              <Button onClick={onTransferClick} className="bg-accent text-accent-foreground hover:bg-accent/90 flex-1" disabled={isActionDisabled}>
+            <div className="grid grid-cols-2 gap-3 pt-4">
+              <Button onClick={onTransferClick} className="bg-accent text-accent-foreground hover:bg-accent/90" disabled={isActionDisabled}>
                 <Send className="mr-2 h-4 w-4" /> Transfer
               </Button>
-              <Button onClick={onBurnClick} variant="destructive" className="flex-1" disabled={isActionDisabled}>
+              <Button onClick={onBurnClick} variant="destructive" disabled={isActionDisabled}>
                 <Trash2 className="mr-2 h-4 w-4" /> Burn
               </Button>
+              {asset.type === 'token' && onDepositClick && (
+                <Button onClick={onDepositClick} variant="outline" className="border-green-500 text-green-600 hover:bg-green-50 hover:text-green-700" disabled={isActionDisabled}>
+                  <ArrowDownToLine className="mr-2 h-4 w-4" /> Deposit
+                </Button>
+              )}
+              {asset.type === 'token' && onWithdrawClick && (
+                <Button onClick={onWithdrawClick} variant="outline" className="border-blue-500 text-blue-600 hover:bg-blue-50 hover:text-blue-700" disabled={isActionDisabled}>
+                  <ArrowUpFromLine className="mr-2 h-4 w-4" /> Withdraw
+                </Button>
+              )}
             </div>
           </div>
         </div>
@@ -149,5 +161,3 @@ export const AssetDisplay: React.FC<AssetDisplayProps> = ({ asset, onTransferCli
     </Card>
   );
 };
-
-    

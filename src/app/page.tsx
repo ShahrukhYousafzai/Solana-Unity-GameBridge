@@ -12,16 +12,19 @@ import { AssetCard } from "@/components/AssetCard";
 import { AssetDisplay } from "@/components/AssetDisplay";
 import { TransferModal } from "@/components/TransferModal";
 import { BurnModal } from "@/components/BurnModal";
+import { DepositModal } from "@/components/DepositModal";
+import { WithdrawModal } from "@/components/WithdrawModal";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { getTransactionExplorerUrl, getAddressExplorerUrl } from "@/utils/explorer";
-import { transferNft, transferSplToken, burnNft, burnSplToken, transferCNft, burnCNft } from "@/lib/solana/transactions";
+import { transferNft, transferSplToken, burnNft, burnSplToken, transferCNft, burnCNft, depositSplToken, initiateWithdrawalRequest } from "@/lib/solana/transactions";
 import { RefreshCw, Package, PackageSearch, CoinsIcon } from "lucide-react";
 import { useNetwork } from "@/contexts/NetworkContext";
 import { NetworkSwitcher } from "@/components/NetworkSwitcher";
+import { CUSTODIAL_WALLET_ADDRESS } from "@/config";
 
 const ConnectWalletButton = dynamic(
   () => import("@/components/ConnectWalletButton").then((mod) => mod.ConnectWalletButton),
@@ -45,6 +48,8 @@ export default function HomePage() {
   const [isLoadingAssets, setIsLoadingAssets] = useState(false);
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [isBurnModalOpen, setIsBurnModalOpen] = useState(false);
+  const [isDepositModalOpen, setIsDepositModalOpen] = useState(false);
+  const [isWithdrawModalOpen, setIsWithdrawModalOpen] = useState(false);
   const [isSubmittingTransaction, setIsSubmittingTransaction] = useState(false);
 
   const allFetchedAssets = useMemo(() => [...nfts, ...cnfts, ...tokens], [nfts, cnfts, tokens]);
@@ -65,9 +70,9 @@ export default function HomePage() {
       
       if (heliusWarning) {
         toast({
-          title: "Helius API Warning",
+          title: "API Warning",
           description: heliusWarning,
-          variant: "destructive", // Can be changed to a "warning" variant if one exists and is preferred
+          variant: "default", 
         });
       }
 
@@ -181,6 +186,75 @@ export default function HomePage() {
       setIsSubmittingTransaction(false);
     }
   }, [selectedAsset, publicKey, sendTransaction, connection, wallet, toast, loadAssets, currentNetwork, rpcUrl, isSubmittingTransaction]);
+
+  const handleConfirmDeposit = useCallback(async (amount: number) => {
+    if (isSubmittingTransaction) {
+      toast({ title: "In Progress", description: "Another transaction is already being processed.", variant: "default" });
+      return;
+    }
+    if (selectedAsset?.type !== "token" || !publicKey || !CUSTODIAL_WALLET_ADDRESS) {
+      toast({ title: "Error", description: "Wallet not connected, no token selected, or custodial address not configured.", variant: "destructive" });
+      return;
+    }
+    if (amount <= 0) {
+      toast({ title: "Error", description: "Invalid deposit amount.", variant: "destructive" });
+      return;
+    }
+
+    setIsSubmittingTransaction(true);
+    try {
+      const signature = await depositSplToken(connection, wallet, selectedAsset as SplToken, amount, CUSTODIAL_WALLET_ADDRESS);
+      toast({
+        title: "Deposit Initiated",
+        description: `Transaction signature: ${signature}`,
+        action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank" rel="noopener noreferrer" className="text-primary underline">View on Explorer</a>,
+      });
+      setIsDepositModalOpen(false);
+      loadAssets(); // Refresh assets after deposit
+    } catch (error: any) {
+      console.error("Deposit failed:", error);
+      toast({ title: "Deposit Failed", description: error.message, variant: "destructive" });
+    } finally {
+      setIsSubmittingTransaction(false);
+    }
+  }, [selectedAsset, publicKey, connection, wallet, toast, loadAssets, currentNetwork, isSubmittingTransaction]);
+
+  const handleRequestWithdrawal = useCallback(async (grossAmount: number, netAmount: number) => {
+    if (isSubmittingTransaction) {
+      toast({ title: "In Progress", description: "Another transaction is already being processed.", variant: "default" });
+      return;
+    }
+     if (selectedAsset?.type !== "token" || !publicKey) {
+      toast({ title: "Error", description: "Wallet not connected or no token selected for withdrawal.", variant: "destructive" });
+      return;
+    }
+    if (grossAmount <= 0) {
+      toast({ title: "Error", description: "Invalid withdrawal amount.", variant: "destructive" });
+      return;
+    }
+
+    setIsSubmittingTransaction(true);
+    try {
+      // This is a placeholder. In a real app, this would call a backend API.
+      const result = await initiateWithdrawalRequest(selectedAsset as SplToken, publicKey.toBase58(), grossAmount, netAmount);
+      if (result.success) {
+        toast({
+          title: "Withdrawal Requested",
+          description: result.message,
+        });
+        setIsWithdrawModalOpen(false);
+        // Note: We don't call loadAssets() here as the actual transfer is backend-driven.
+        // The user's "in-game" balance would be updated by the backend.
+      } else {
+        toast({ title: "Withdrawal Request Failed", description: result.message, variant: "destructive" });
+      }
+    } catch (error: any) {
+      console.error("Withdrawal request failed:", error);
+      toast({ title: "Withdrawal Request Failed", description: error.message, variant: "destructive" });
+    } finally {
+      setIsSubmittingTransaction(false);
+    }
+  }, [selectedAsset, publicKey, toast, isSubmittingTransaction]);
   
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -302,6 +376,8 @@ export default function HomePage() {
                   asset={selectedAsset}
                   onTransferClick={() => setIsTransferModalOpen(true)}
                   onBurnClick={() => setIsBurnModalOpen(true)}
+                  onDepositClick={selectedAsset.type === 'token' ? () => setIsDepositModalOpen(true) : undefined}
+                  onWithdrawClick={selectedAsset.type === 'token' ? () => setIsWithdrawModalOpen(true) : undefined}
                   currentNetwork={currentNetwork}
                   isActionDisabled={isSubmittingTransaction}
                 />
@@ -350,6 +426,22 @@ export default function HomePage() {
             onClose={() => setIsBurnModalOpen(false)}
             onConfirmBurn={handleConfirmBurn}
           />
+          {selectedAsset.type === 'token' && (
+            <>
+              <DepositModal
+                asset={selectedAsset as SplToken}
+                isOpen={isDepositModalOpen}
+                onClose={() => setIsDepositModalOpen(false)}
+                onConfirmDeposit={handleConfirmDeposit}
+              />
+              <WithdrawModal
+                asset={selectedAsset as SplToken}
+                isOpen={isWithdrawModalOpen}
+                onClose={() => setIsWithdrawModalOpen(false)}
+                onConfirmWithdraw={handleRequestWithdrawal}
+              />
+            </>
+          )}
         </>
       )}
     </div>
