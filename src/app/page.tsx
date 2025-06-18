@@ -96,20 +96,20 @@ export default function HomePage() {
 
   useEffect(() => {
     if (typeof window !== 'undefined' && canvasRef.current) {
-      if (typeof window.createUnityInstance === 'function') {
-        const unityConfig = {
-          dataUrl: `/Build/${UNITY_GAME_BUILD_BASE_NAME}.data`,
-          frameworkUrl: `/Build/${UNITY_GAME_BUILD_BASE_NAME}.framework.js`,
-          codeUrl: `/Build/${UNITY_GAME_BUILD_BASE_NAME}.wasm`,
-          // companyName: "YourCompany", // Optional: Set in Unity Player Settings
-          // productName: UNITY_GAME_BUILD_BASE_NAME, // Optional: Set in Unity Player Settings
-        };
-        console.log("[UnityBridge] Attempting to create Unity instance. UNITY_GAME_BUILD_BASE_NAME from config:", UNITY_GAME_BUILD_BASE_NAME);
-        console.log("[UnityBridge] Using Unity config:", JSON.stringify(unityConfig, null, 2));
-        console.log("[UnityBridge] Canvas element:", canvasRef.current);
+      const unityConfig = {
+        dataUrl: `/Build/${UNITY_GAME_BUILD_BASE_NAME}.data`,
+        frameworkUrl: `/Build/${UNITY_GAME_BUILD_BASE_NAME}.framework.js`,
+        codeUrl: `/Build/${UNITY_GAME_BUILD_BASE_NAME}.wasm`,
+        // companyName: "YourCompany", // Optional: Set in Unity Player Settings
+        // productName: UNITY_GAME_BUILD_BASE_NAME, // Optional: Set in Unity Player Settings
+      };
+      
+      console.log("[UnityBridge] Attempting to create Unity instance. UNITY_GAME_BUILD_BASE_NAME from config:", UNITY_GAME_BUILD_BASE_NAME);
+      console.log("[UnityBridge] Using Unity config:", JSON.stringify(unityConfig, null, 2));
+      console.log("[UnityBridge] Canvas element:", canvasRef.current);
 
+      if (typeof window.createUnityInstance === 'function') {
         window.createUnityInstance(canvasRef.current, unityConfig, (progress) => {
-          // console.log(`[UnityBridge] Loading progress: ${progress * 100}%`); // Can be very verbose
           setUnityLoadingProgress(progress * 100);
         }).then((instance) => {
           console.log("[UnityBridge] Unity instance created successfully.");
@@ -123,30 +123,30 @@ export default function HomePage() {
           sendToUnity("GameManager", "OnUnityLoadError", { error: error.message || "Unknown error during Unity instance creation." });
           toast({
             title: "Unity Load Error",
-            description: `Failed to load game: ${error.message || 'Unknown error'}. Check browser console. Ensure: \n1. UNITY_GAME_BUILD_BASE_NAME in .env matches Unity Product Name. \n2. "Name Files As Hashes" is OFF in Unity Build Settings. \n3. Build files are in /public/Build/ and filenames match (e.g., ${UNITY_GAME_BUILD_BASE_NAME}.data). \n4. Loader script in layout.tsx (e.g., ${UNITY_GAME_BUILD_BASE_NAME}.loader.js) is correct.`,
+            description: `Failed to load game: ${error.message || 'Unknown error'}. Check browser console. This could be due to: \n1. Incorrect UNITY_GAME_BUILD_BASE_NAME in .env (current: "${UNITY_GAME_BUILD_BASE_NAME}") not matching Unity Product Name. \n2. "Name Files As Hashes" being ENABLED in Unity Build Settings (it should be OFF). \n3. Build files (${UNITY_GAME_BUILD_BASE_NAME}.data, .framework.js, .wasm) missing from /public/Build/ or having incorrect names. \n4. Errors from within Unity's framework loading.`,
             variant: "destructive",
-            duration: 20000
+            duration: 30000 
           });
         });
       } else {
-        console.error("[UnityBridge] CRITICAL: window.createUnityInstance is not available. This means the Unity loader script (e.g., " + UNITY_GAME_BUILD_BASE_NAME + ".loader.js) specified in src/app/layout.tsx likely failed to load (404 Not Found?) or execute. Check browser Network tab and Console for errors related to this script.");
+        console.error(`[UnityBridge] CRITICAL: window.createUnityInstance is not available. This means the Unity loader script (e.g., ${UNITY_GAME_BUILD_BASE_NAME}.loader.js) specified in src/app/layout.tsx likely failed to load (404 Not Found?) or execute. Check browser Network tab and Console for errors related to this script.`);
         const timer = setTimeout(() => {
-          if (isUnityLoading) {
-               setIsUnityLoading(false);
+          if (isUnityLoading) { // Check if still loading, might have resolved quickly
+               setIsUnityLoading(false); // Hide loading bar if stuck
                sendToUnity("GameManager", "OnUnityLoadError", { error: "Unity loader script (createUnityInstance) not found on window."});
                toast({
-                title: "Game Loader Script Error",
-                description: `Essential Unity loader script (e.g., ${UNITY_GAME_BUILD_BASE_NAME}.loader.js) not found or failed to run. \n1. Verify its path in src/app/layout.tsx. \n2. Ensure it's in /public/Build/. \n3. Check browser's Network tab for 404 errors and Console for script errors.`,
+                title: "Game Loader Script Error!",
+                description: `Essential Unity loader script ('${UNITY_GAME_BUILD_BASE_NAME}.loader.js') not found or failed to run. \n1. Verify UNITY_GAME_BUILD_BASE_NAME in .env is correct (current: "${UNITY_GAME_BUILD_BASE_NAME}"). \n2. Ensure the loader script is in /public/Build/ and named '${UNITY_GAME_BUILD_BASE_NAME}.loader.js'. \n3. Ensure "Name Files As Hashes" is OFF in Unity build settings. \n4. Check browser's Network tab for 404 errors and Console for script execution errors.`,
                 variant: "destructive",
-                duration: 20000
+                duration: 30000 
               });
           }
-        }, 5000);
+        }, 5000); // Wait 5 seconds before showing this critical toast
         return () => clearTimeout(timer);
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // UNITY_GAME_BUILD_BASE_NAME is a const from import, so not needed in deps
 
 
   const fetchSolBalance = useCallback(async () => {
@@ -593,13 +593,12 @@ export default function HomePage() {
     setCurrentNetwork,
     toast, sendToUnity,
     unityInstance,
-    // isLoadingAssets, isSubmittingTransaction, // Removed as per previous optimization
   ]);
 
 
   return (
     <div className="flex flex-col h-screen max-h-screen overflow-hidden bg-background text-foreground">
-       <header className="sticky top-0 z-[100] w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 h-16 shrink-0">
+      <header className="sticky top-0 z-[100] w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 h-16 shrink-0">
         <div className="container flex h-full items-center justify-between px-4 md:px-6 mx-auto">
           <NetworkSwitcher />
           <ConnectWalletButton />
@@ -632,16 +631,13 @@ export default function HomePage() {
              <p className="text-lg text-foreground mt-4">Loading Game...</p>
           </div>
         )}
-        {/* Conditionally render canvas container to ensure it's not affecting layout until loading is done */}
-        {!isUnityLoading && (
-            <canvas
-                ref={canvasRef}
-                id="unity-canvas"
-                className="w-full h-full block" // Ensures it takes full space of parent
-                style={{ background: 'transparent' }} // Keep background transparent
-                tabIndex={-1} // Good for accessibility if canvas handles focus
-            ></canvas>
-        )}
+        <canvas
+            ref={canvasRef}
+            id="unity-canvas"
+            className={`w-full h-full block ${isUnityLoading ? 'opacity-0' : 'opacity-100'} transition-opacity duration-500`}
+            style={{ background: 'transparent' }}
+            tabIndex={-1}
+        ></canvas>
       </main>
     </div>
   );
