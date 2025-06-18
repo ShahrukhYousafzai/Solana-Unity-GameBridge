@@ -75,8 +75,9 @@ public class MainMenuManager : MonoBehaviour
         {
             _publicKey = PlayerPrefs.GetString("WalletAddress");
             UserProfileNameText.text = FormatWalletAddress(_publicKey);
-            // Consider also setting _isWalletConnected = true here if appropriate
-            // and potentially verifying connection status with the bridge if needed.
+            _isWalletConnected = true; // Mark as connected
+            if(connectButton) connectButton.gameObject.SetActive(false); // Hide connect button
+            // walletConnectPanel should be hidden by ShowGameMenu
             StartCoroutine(ShowGameMenu());
         }
 
@@ -288,3 +289,5 @@ public class MainMenuManager : MonoBehaviour
 // Example structure for ToastNotification if not defined:
 // public static class ToastNotification { public static void Show(string message, string type) { Debug.Log($"Toast [{type}]: {message}"); } }
 
+
+    

@@ -255,8 +255,13 @@ export default function HomePage() {
         return pk;
       },
       disconnectWallet: async () => {
+        console.log("[UnityBridge] bridge.disconnectWallet CALLED.");
         try {
           await disconnectWalletAdapter();
+          console.log("[UnityBridge] disconnectWalletAdapter promise resolved.");
+          // The useEffect monitoring 'connected' state will handle sending OnWalletDisconnected.
+          // However, to be more explicit and immediate:
+          sendToUnity("GameBridgeManager", "OnWalletDisconnected", {});
         } catch (error: any) {
           console.error("[UnityBridge] disconnectWallet error:", error);
           sendToUnity("GameBridgeManager", "OnWalletConnectionError", { error: error.message, action: "disconnect_wallet" });
@@ -711,3 +716,5 @@ export default function HomePage() {
   );
 }
 
+
+    
