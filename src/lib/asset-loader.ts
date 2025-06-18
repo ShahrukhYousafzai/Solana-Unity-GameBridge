@@ -46,13 +46,13 @@ const getHeliusAssetsByOwner = async (ownerAddress: string, rpcUrl: string): Pro
       page: 1,
       limit: 1000,
       displayOptions: {
-        showFungible: true, // Keep true to see if Helius returns them, though we prioritize RPC/UMI for fungibles
+        showFungible: false, // Set to false, we handle fungibles separately
         showUnverifiedCollections: true,
         showCollectionMetadata: true,
       }
     },
   });
-  console.log(`[AssetLoader] Received ${result.items?.length || 0} assets from Helius.`);
+  console.log(`[AssetLoader] Received ${result.items?.length || 0} assets from Helius for NFT/cNFT processing.`);
   return result.items || [];
 };
 
@@ -77,6 +77,11 @@ export const getHeliusAssetProof = async (assetId: string, rpcUrl: string): Prom
 
 const normalizeHeliusToNftOrCnft = (heliusAsset: HeliusAsset): Nft | CNft | null => {
   if (heliusAsset.burnt) return null;
+
+  // Explicitly skip fungible asset types here as they are handled separately
+  if (heliusAsset.interface === "FungibleAsset" || heliusAsset.interface === "FungibleToken") {
+    return null;
+  }
 
   const commonName = heliusAsset.content?.metadata?.name;
   const commonSymbol = heliusAsset.content?.metadata?.symbol;
@@ -169,7 +174,7 @@ export async function fetchAssetsForOwner(
   try {
     const heliusAssets = await getHeliusAssetsByOwner(ownerAddressString, rpcUrl);
     for (const heliusAsset of heliusAssets) {
-      const asset = normalizeHeliusToNftOrCnft(heliusAsset);
+      const asset = normalizeHeliusToNftOrCnft(heliusAsset); // This will skip fungibles from Helius
       if (asset) {
         if (asset.type === "nft") nfts.push(asset);
         else if (asset.type === "cnft") cnfts.push(asset);
@@ -177,126 +182,140 @@ export async function fetchAssetsForOwner(
     }
     console.log(`[AssetLoader] Processed Helius assets: ${nfts.length} NFTs, ${cnfts.length} cNFTs.`);
   } catch (error: any) {
-    heliusWarning = "Could not load NFTs and cNFTs: " + error.message;
-    console.warn(`[AssetLoader] Helius fetch failed: ${heliusWarning}`);
+    heliusWarning = "Could not load NFTs and cNFTs from Helius: " + error.message;
+    console.warn(`[AssetLoader] Helius NFT/cNFT fetch failed: ${heliusWarning}`);
   }
 
   // 2. Fetch Fungible Tokens (balances via direct RPC, metadata via UMI)
-  console.log("[AssetLoader] Initializing UMI for fungible token metadata...");
   const umi = createUmi(rpcUrl).use(mplTokenMetadata());
-  if (wallet.publicKey && wallet.connected) {
-    umi.use(walletAdapterIdentity(wallet));
-    console.log("[AssetLoader] UMI using wallet adapter identity.");
-  } else {
-    console.log("[AssetLoader] UMI operating without wallet signer (expected for read operations).");
-  }
 
-  const tokenAccountsRaw: Array<{ pubkey: PublicKey; account: AccountInfo<ParsedAccountData>; }> = [];
+  const tokenAccountsRaw: Array<{ pubkey: PublicKey; account: AccountInfo<ParsedAccountData>; programId: PublicKey }> = [];
   try {
     console.log(`[AssetLoader] Fetching SPL token accounts for owner: ${ownerAddressString}`);
     const splTokenAccounts = await connection.getParsedTokenAccountsByOwner(ownerPublicKey, { programId: TOKEN_PROGRAM_ID });
     console.log(`[AssetLoader] Found ${splTokenAccounts.value.length} raw SPL token accounts.`);
-    tokenAccountsRaw.push(...splTokenAccounts.value);
+    splTokenAccounts.value.forEach(acc => tokenAccountsRaw.push({...acc, programId: TOKEN_PROGRAM_ID}));
   } catch (e) { console.warn("[AssetLoader] Failed to get SPL token accounts:", e); }
   
   try {
     console.log(`[AssetLoader] Fetching Token-2022 accounts for owner: ${ownerAddressString}`);
     const token2022Accounts = await connection.getParsedTokenAccountsByOwner(ownerPublicKey, { programId: TOKEN_2022_PROGRAM_ID });
     console.log(`[AssetLoader] Found ${token2022Accounts.value.length} raw Token-2022 accounts.`);
-    tokenAccountsRaw.push(...token2022Accounts.value);
+    token2022Accounts.value.forEach(acc => tokenAccountsRaw.push({...acc, programId: TOKEN_2022_PROGRAM_ID}));
   } catch (e) { console.warn("[AssetLoader] Failed to get Token-2022 accounts:", e); }
 
-  console.log(`[AssetLoader] Total raw token accounts to process: ${tokenAccountsRaw.length}`);
+  console.log(`[AssetLoader] Total raw token accounts (SPL & Token-2022) to process: ${tokenAccountsRaw.length}`);
   const tokenAccountInfoMap = new Map<string, { mint: string; balance: number; rawBalance: bigint; decimals: number; tokenAccountAddress: string }>();
 
   for (const acc of tokenAccountsRaw) {
     try {
       const parsedInfo = (acc.account.data as ParsedAccountData).parsed.info;
-      console.log(`[AssetLoader] Processing raw token account: Mint: ${parsedInfo.mint}, ATA: ${acc.pubkey.toBase58()}, TokenAmount: ${JSON.stringify(parsedInfo.tokenAmount)}`);
+      console.log(`[AssetLoader] Raw token account processing: Mint: ${parsedInfo.mint}, ATA: ${acc.pubkey.toBase58()}, Program: ${acc.programId.toBase58()}, TokenAmount: ${JSON.stringify(parsedInfo.tokenAmount)}`);
 
       const isNftOrCNftMint = nfts.some(n => n.id === parsedInfo.mint) || cnfts.some(c => c.id === parsedInfo.mint);
       if (isNftOrCNftMint) {
-          console.log(`[AssetLoader] Mint ${parsedInfo.mint} is an NFT/cNFT, skipping for fungible token list.`);
+          console.log(`[AssetLoader] Mint ${parsedInfo.mint} is an NFT/cNFT (already processed by Helius), skipping for fungible token list.`);
           continue;
       }
       
-      if (parsedInfo.mint && parsedInfo.tokenAmount && parsedInfo.tokenAmount.amount !== "0") {
-        const decimals = parsedInfo.tokenAmount.decimals;
-        const balance = typeof parsedInfo.tokenAmount.uiAmount === 'number' 
-                        ? parsedInfo.tokenAmount.uiAmount 
-                        : (Number(parsedInfo.tokenAmount.amount) / (10 ** decimals));
-
-        if (balance > 0) {
-            console.log(`[AssetLoader] Adding to tokenAccountInfoMap: Mint: ${parsedInfo.mint}, Balance: ${balance}, Decimals: ${decimals}, ATA: ${acc.pubkey.toBase58()}`);
-            tokenAccountInfoMap.set(parsedInfo.mint, {
-                mint: parsedInfo.mint,
-                balance: balance,
-                rawBalance: BigInt(parsedInfo.tokenAmount.amount),
-                decimals: decimals,
-                tokenAccountAddress: acc.pubkey.toBase58(),
-            });
+      if (parsedInfo.mint && parsedInfo.tokenAmount && typeof parsedInfo.tokenAmount.amount === 'string' && parsedInfo.tokenAmount.amount !== "0") {
+        // Defensive parsing for decimals
+        const decimals = (typeof parsedInfo.tokenAmount.decimals === 'number' && !isNaN(parsedInfo.tokenAmount.decimals)) 
+                         ? parsedInfo.tokenAmount.decimals 
+                         : 0;
+        
+        let uiBalance: number;
+        if (typeof parsedInfo.tokenAmount.uiAmount === 'number' && !isNaN(parsedInfo.tokenAmount.uiAmount)) {
+          uiBalance = parsedInfo.tokenAmount.uiAmount;
+        } else if (typeof parsedInfo.tokenAmount.uiAmountString === 'string') {
+          uiBalance = parseFloat(parsedInfo.tokenAmount.uiAmountString);
+          if (isNaN(uiBalance)) { // Handle cases where parseFloat might return NaN
+            console.warn(`[AssetLoader] parseFloat(uiAmountString) resulted in NaN for mint ${parsedInfo.mint}. uiAmountString: ${parsedInfo.tokenAmount.uiAmountString}. Falling back to raw calculation.`);
+            uiBalance = Number(parsedInfo.tokenAmount.amount) / (10 ** decimals);
+          }
         } else {
-            console.log(`[AssetLoader] Skipping token account due to zero balance (after calculation): Mint: ${parsedInfo.mint}, ATA: ${acc.pubkey.toBase58()}. Raw amount: ${parsedInfo.tokenAmount.amount}`);
+          uiBalance = Number(parsedInfo.tokenAmount.amount) / (10 ** decimals);
         }
+        
+        // Check if balance is valid after calculation
+        if (isNaN(uiBalance)) {
+            console.warn(`[AssetLoader] Calculated uiBalance is NaN for mint ${parsedInfo.mint}. Raw amount: ${parsedInfo.tokenAmount.amount}, Decimals: ${decimals}. Skipping this token.`);
+            continue;
+        }
+        
+        console.log(`[AssetLoader] Adding to tokenAccountInfoMap: Mint: ${parsedInfo.mint}, UI Balance: ${uiBalance}, Raw Balance: ${parsedInfo.tokenAmount.amount}, Decimals: ${decimals}, ATA: ${acc.pubkey.toBase58()}`);
+        tokenAccountInfoMap.set(parsedInfo.mint, {
+            mint: parsedInfo.mint,
+            balance: uiBalance,
+            rawBalance: BigInt(parsedInfo.tokenAmount.amount),
+            decimals: decimals,
+            tokenAccountAddress: acc.pubkey.toBase58(),
+        });
       } else {
-        console.log(`[AssetLoader] Skipping token account: Mint: ${parsedInfo.mint}, ATA: ${acc.pubkey.toBase58()}. Reason: Raw amount is '0' or tokenAmount is invalid. Raw amount: ${parsedInfo.tokenAmount?.amount}`);
+        console.log(`[AssetLoader] Skipping token account: Mint: ${parsedInfo.mint}, ATA: ${acc.pubkey.toBase58()}. Reason: Raw amount is '0' or tokenAmount/mint is invalid. Raw amount: ${parsedInfo.tokenAmount?.amount}`);
       }
-    } catch (e) {
-      console.warn("[AssetLoader] Failed to parse token account data for fungibles:", acc.pubkey.toBase58(), e);
+    } catch (e: any) {
+      console.warn(`[AssetLoader] Failed to parse token account data for fungibles: ${acc.pubkey.toBase58()}`, e.message, e.stack);
     }
   }
-  console.log(`[AssetLoader] tokenAccountInfoMap size: ${tokenAccountInfoMap.size}`);
+  console.log(`[AssetLoader] tokenAccountInfoMap size (non-zero balance tokens): ${tokenAccountInfoMap.size}`);
   
   const mintsToFetchMeta = Array.from(tokenAccountInfoMap.keys());
   let allOwnerAssetsUmi: UmiDigitalAsset[] = [];
 
   if (mintsToFetchMeta.length > 0) {
+    // Attempt to use wallet identity if connected, otherwise proceed without (read-only for UMI)
+    if (wallet.publicKey && wallet.connected && wallet.signTransaction) { // Check for signTransaction as a proxy for full wallet capabilities
+        umi.use(walletAdapterIdentity(wallet));
+        console.log("[AssetLoader] UMI using wallet adapter identity for metadata fetch.");
+    } else {
+        console.log("[AssetLoader] UMI operating without wallet signer for metadata fetch (read-only).");
+    }
     try {
         console.log(`[AssetLoader] Fetching UMI metadata for ${mintsToFetchMeta.length} mints.`);
         const umiOwnerUmiPublicKey = umi.eddsa.createPublicKey(ownerAddressString);
         allOwnerAssetsUmi = await fetchAllDigitalAssetByOwner(umi, umiOwnerUmiPublicKey);
         console.log(`[AssetLoader] UMI fetchAllDigitalAssetByOwner returned ${allOwnerAssetsUmi.length} assets.`);
     } catch (e: any) {
-        console.warn("[AssetLoader] UMI fetchAllDigitalAssetByOwner failed:", e.message);
-        // Proceed without UMI metadata if it fails
+        console.warn("[AssetLoader] UMI fetchAllDigitalAssetByOwner failed. Proceeding without UMI metadata for some/all tokens:", e.message, e.stack);
+        // allOwnerAssetsUmi will remain empty, processing will continue using placeholders
     }
   }
 
-  const placeholderRawHeliusAsset = {} as HeliusAsset; // For SplToken type compliance
+
+  const placeholderRawHeliusAsset = {} as HeliusAsset; 
 
   for (const [mint, accInfo] of tokenAccountInfoMap.entries()) {
-    const umiAsset = allOwnerAssetsUmi.find(ua => ua.mint.publicKey.toString() === mint);
     let name = `Token ${mint.substring(0, 6)}...`;
     let symbol = mint.substring(0, 4).toUpperCase();
     let imageUrl: string | undefined = undefined;
     let uri: string | undefined = undefined;
 
+    const umiAsset = allOwnerAssetsUmi.find(ua => ua.mint.publicKey.toString() === mint);
     if (umiAsset) {
       console.log(`[AssetLoader] Found UMI metadata for mint: ${mint}, Name: ${umiAsset.metadata.name}`);
       name = umiAsset.metadata.name || name;
       symbol = umiAsset.metadata.symbol || symbol;
       uri = umiAsset.metadata.uri;
+      // Asynchronously fetch image URL without blocking the main loop
       if (uri) {
-        // Fetching image URL is async, but let's not await it here to keep the main loop faster.
-        // It can be loaded lazily in the component or pre-fetched if performance allows.
-        // For simplicity, not awaiting here. If images are critical, this might need adjustment.
         fetchImageUrlFromMetadataUri(uri, umi).then(imgUrl => {
             if (imgUrl) {
                 const existingToken = tokensMap.get(mint);
                 if (existingToken) tokensMap.set(mint, {...existingToken, imageUrl: imgUrl });
             }
-        }).catch(e => console.warn(`[AssetLoader] Background image fetch failed for ${mint}: ${e}`));
+        }).catch(e => console.warn(`[AssetLoader] Background image fetch failed for ${mint} (${uri}): ${e.message}`));
       }
     } else {
         console.log(`[AssetLoader] No UMI metadata found for mint: ${mint}. Using placeholders.`);
     }
     
-    console.log(`[AssetLoader] Adding to tokensMap: Mint: ${mint}, Name: ${name}, Symbol: ${symbol}, Balance: ${accInfo.balance}`);
+    console.log(`[AssetLoader] Adding to tokensMap: Mint: ${mint}, Name: ${name}, Symbol: ${symbol}, Balance: ${accInfo.balance}, Decimals: ${accInfo.decimals}`);
     tokensMap.set(mint, {
       id: mint,
       name,
       symbol,
-      imageUrl, // May be populated later by async image fetch
+      imageUrl, 
       type: "token",
       uri,
       decimals: accInfo.decimals,
@@ -312,5 +331,3 @@ export async function fetchAssetsForOwner(
 
   return { nfts, cnfts, tokens: finalTokens, heliusWarning };
 }
-
-    
