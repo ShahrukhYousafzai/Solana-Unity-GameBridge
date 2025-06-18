@@ -6,7 +6,7 @@ import {
   VersionedTransaction,
   TransactionMessage,
   type AccountMeta,
-  TransactionInstruction, 
+  TransactionInstruction,
 } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
@@ -17,14 +17,14 @@ import {
 } from "@solana/spl-token";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import type { Nft, CNft, SplToken } from "@/types/solana";
-import { 
+import {
   PROGRAM_ID as BUBBLEGUM_PROGRAM_ID,
   createBurnInstruction as createBubblegumBurnInstruction,
   createTransferInstruction as createBubblegumTransferInstruction,
 } from "@metaplex-foundation/mpl-bubblegum";
-import { 
-  SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, 
-  SPL_NOOP_PROGRAM_ID 
+import {
+  SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
+  SPL_NOOP_PROGRAM_ID,
 } from '@solana/spl-account-compression';
 import { getHeliusAssetProof } from "@/lib/helius";
 import BN from 'bn.js';
@@ -36,9 +36,9 @@ async function sendTransaction(
   connection: Connection,
   wallet: WalletContextState
 ): Promise<string> {
-  const payerPublicKey = wallet.publicKey; 
-  const signTransactionFn = wallet.signTransaction; 
-  
+  const payerPublicKey = wallet.publicKey;
+  const signTransactionFn = wallet.signTransaction;
+
   if (!payerPublicKey || !signTransactionFn) {
     throw new Error("Wallet not connected or doesn't support signing.");
   }
@@ -48,18 +48,13 @@ async function sendTransaction(
 
   instructions.forEach((instruction, idx) => {
     if (!instruction.programId || !(instruction.programId instanceof PublicKey)) {
-      const originalProgramId = (instruction as any)._programId;
-       if (originalProgramId && originalProgramId instanceof PublicKey) {
-         instruction.programId = originalProgramId;
-       } else {
-        console.error("Problematic instruction at index", idx, JSON.stringify(instruction, null, 2));
-        throw new Error(`Instruction ${idx} has invalid or undefined programId.`);
-       }
+      console.error("Problematic instruction at index", idx, "due to programId:", JSON.stringify(instruction, null, 2));
+      throw new Error(`Instruction ${idx} has invalid or undefined programId.`);
     }
     instruction.keys.forEach((key, keyIdx) => {
       if (!key.pubkey || !(key.pubkey instanceof PublicKey)) {
-         console.error(`Problematic key in instruction ${idx}, key ${keyIdx}:`, JSON.stringify(key, null, 2));
-         console.error("Full instruction:", JSON.stringify(instruction, null, 2));
+        console.error(`Problematic key in instruction ${idx}, key ${keyIdx}:`, JSON.stringify(key, null, 2));
+        console.error("Full instruction:", JSON.stringify(instruction, null, 2));
         throw new Error(
           `Instruction ${idx} key ${keyIdx} has invalid or undefined pubkey: ${JSON.stringify(key)}`
         );
@@ -71,21 +66,22 @@ async function sendTransaction(
   if (!latestBlockhash || !latestBlockhash.blockhash) {
     throw new Error("Failed to get recent blockhash from connection.");
   }
-  
+
   const messageV0 = new TransactionMessage({
-    payerKey: payerPublicKey, 
+    payerKey: payerPublicKey,
     recentBlockhash: latestBlockhash.blockhash,
     instructions: instructions,
   }).compileToV0Message();
 
   const versionedTransaction = new VersionedTransaction(messageV0);
-  
-  const signedTransaction = await signTransactionFn(versionedTransaction); 
-  
+
+  const signedTransaction = await signTransactionFn(versionedTransaction);
+
   const signature = await connection.sendTransaction(signedTransaction, {
-    maxRetries: 5,
+    skipPreflight: false, // Default, explicit for clarity
+    maxRetries: 0,      // Prevent internal retries with the same signature
   });
-  
+
   const confirmation = await connection.confirmTransaction({
     signature,
     blockhash: latestBlockhash.blockhash,
@@ -96,10 +92,10 @@ async function sendTransaction(
     console.error("Transaction confirmation error:", confirmation.value.err);
     let logs;
     try {
-        logs = await connection.getLogs(signature, {commitment: "confirmed"});
-        console.error("Transaction logs:", logs);
+      logs = await connection.getLogs(signature, { commitment: "confirmed" });
+      console.error("Transaction logs:", logs);
     } catch (logError) {
-        console.error("Failed to fetch transaction logs:", logError);
+      console.error("Failed to fetch transaction logs:", logError);
     }
     throw new Error(`Transaction failed to confirm: ${JSON.stringify(confirmation.value.err)}. Logs: ${logs && logs.logs ? JSON.stringify(logs.logs) : "Could not fetch logs."}`);
   }
@@ -123,27 +119,27 @@ export async function transferNft(
   const mintPublicKey = new PublicKey(nft.id);
   const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey);
   const recipientAta = getAssociatedTokenAddressSync(mintPublicKey, recipientAddress);
-  
+
   const instructions: TransactionInstruction[] = [];
 
   const recipientAtaInfo = await connection.getAccountInfo(recipientAta);
   if (!recipientAtaInfo) {
     instructions.push(
       createAssociatedTokenAccountInstruction(
-        ownerPublicKey, 
-        recipientAta,   
-        recipientAddress, 
-        mintPublicKey     
+        ownerPublicKey,
+        recipientAta,
+        recipientAddress,
+        mintPublicKey
       )
     );
   }
-  
+
   instructions.push(
     createSplTransferInstruction(
       sourceAta,
       recipientAta,
       ownerPublicKey,
-      1 
+      1
     )
   );
 
@@ -155,7 +151,7 @@ export async function transferSplToken(
   wallet: WalletContextState,
   token: SplToken,
   recipientAddress: PublicKey,
-  amount: number 
+  amount: number
 ): Promise<string> {
   const ownerPublicKey = wallet.publicKey;
   if (!ownerPublicKey) throw new Error("Wallet not connected.");
@@ -168,7 +164,7 @@ export async function transferSplToken(
 
   const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey);
   const recipientAta = getAssociatedTokenAddressSync(mintPublicKey, recipientAddress);
-  
+
   const instructions: TransactionInstruction[] = [];
 
   const recipientAtaInfo = await connection.getAccountInfo(recipientAta);
@@ -191,7 +187,7 @@ export async function transferSplToken(
       rawAmount
     )
   );
-  
+
   return sendTransaction(instructions, connection, wallet);
 }
 
@@ -208,15 +204,15 @@ export async function burnNft(
 
   const instructions: TransactionInstruction[] = [
     createSplBurnInstruction(
-      ownerTokenAccount, 
-      mintPublicKey,     
-      ownerPublicKey,  
-      1                  
+      ownerTokenAccount,
+      mintPublicKey,
+      ownerPublicKey,
+      1
     ),
     createCloseAccountInstruction(
-      ownerTokenAccount,    
-      ownerPublicKey,     
-      ownerPublicKey      
+      ownerTokenAccount,
+      ownerPublicKey,
+      ownerPublicKey
     )
   ];
   return sendTransaction(instructions, connection, wallet);
@@ -226,7 +222,7 @@ export async function burnSplToken(
   connection: Connection,
   wallet: WalletContextState,
   token: SplToken,
-  amount: number 
+  amount: number
 ): Promise<string> {
   const ownerPublicKey = wallet.publicKey;
   if (!ownerPublicKey) throw new Error("Wallet not connected.");
@@ -234,7 +230,7 @@ export async function burnSplToken(
   const mintPublicKey = new PublicKey(token.id);
   const rawAmount = BigInt(Math.round(amount * (10 ** token.decimals)));
   const ownerTokenAccount = token.tokenAddress ? new PublicKey(token.tokenAddress) : getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey);
-  
+
   const instructions: TransactionInstruction[] = [
     createSplBurnInstruction(
       ownerTokenAccount,
@@ -244,26 +240,28 @@ export async function burnSplToken(
     )
   ];
 
-  if (rawAmount === token.rawBalance) { 
-     instructions.push(
-        createCloseAccountInstruction(
-            ownerTokenAccount,    
-            ownerPublicKey,     
-            ownerPublicKey      
-        )
-     );
+  if (rawAmount === token.rawBalance) {
+    instructions.push(
+      createCloseAccountInstruction(
+        ownerTokenAccount,
+        ownerPublicKey,
+        ownerPublicKey
+      )
+    );
   }
 
   return sendTransaction(instructions, connection, wallet);
 }
 
-
 const mapProofForBubblegum = (assetProof: { proof: string[] }): AccountMeta[] => {
   if (!assetProof.proof || !Array.isArray(assetProof.proof)) {
-    // Allow empty proof for canopy depth 0 trees or if Helius returns it empty
-    return []; 
+    return [];
   }
-  return assetProof.proof.map((node) => ({
+  // Filter out any potentially problematic (empty or non-string) proof elements
+  // This is a defensive measure, ideally Helius returns a clean proof.
+  const validProofPubkeys = assetProof.proof.filter(p => typeof p === 'string' && p.trim() !== '');
+  
+  return validProofPubkeys.map((node) => ({
     pubkey: new PublicKey(node),
     isSigner: false,
     isWritable: false,
@@ -278,39 +276,38 @@ export async function transferCNft(
   recipientAddress: PublicKey,
   rpcUrl: string
 ): Promise<string> {
-  const walletPublicKey = wallet.publicKey; 
+  const walletPublicKey = wallet.publicKey;
 
   if (!walletPublicKey) throw new Error("Wallet not connected for cNFT transfer.");
   if (!(walletPublicKey instanceof PublicKey)) throw new Error("Invalid wallet public key. Expected instance of PublicKey for cNFT transfer.");
   if (!(recipientAddress instanceof PublicKey)) throw new Error('Recipient address is not a valid PublicKey instance for cNFT transfer.');
-  
+
   if (!(BUBBLEGUM_PROGRAM_ID instanceof PublicKey)) throw new Error("Critical: BUBBLEGUM_PROGRAM_ID is not a valid PublicKey for transfer.");
   if (!(SPL_NOOP_PROGRAM_ID instanceof PublicKey)) throw new Error("Critical: SPL_NOOP_PROGRAM_ID is not a PublicKey for transfer.");
   if (!(SPL_ACCOUNT_COMPRESSION_PROGRAM_ID instanceof PublicKey)) throw new Error("Critical: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID is not a PublicKey for transfer.");
-  
+
   if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing for transfer.");
   const { compression, ownership } = cnft.rawHeliusAsset;
 
-  if (typeof compression.data_hash !== 'string' || !compression.data_hash.trim() ||
-      typeof compression.creator_hash !== 'string' || !compression.creator_hash.trim() || 
-      typeof compression.leaf_id !== 'number') { 
-    throw new Error("Essential compression data (data_hash, creator_hash, or leaf_id) is missing or invalid from rawHeliusAsset for transfer.");
+  if (typeof compression.data_hash !== 'string' || !compression.data_hash.trim()) throw new Error("Compression data_hash missing/invalid.");
+  if (typeof compression.creator_hash !== 'string' || !compression.creator_hash.trim()) throw new Error("Compression creator_hash missing/invalid.");
+  if (typeof compression.leaf_id !== 'number') throw new Error("Compression leaf_id missing/invalid.");
+  if (typeof ownership.owner !== 'string' || !ownership.owner.trim()) throw new Error("Ownership owner missing/invalid.");
+  
+  const assetProof = await getHeliusAssetProof(cnft.id, rpcUrl);
+  if (!assetProof || typeof assetProof.root !== 'string' || !assetProof.root.trim() || typeof assetProof.tree_id !== 'string' || !assetProof.tree_id.trim()) {
+    throw new Error('Failed to retrieve valid asset proof (root or tree_id missing/invalid).');
   }
-  if (typeof ownership.owner !== 'string' || !ownership.owner.trim()) {
-    throw new Error("Essential ownership data (owner) is missing or invalid from rawHeliusAsset for transfer.");
+  if (!assetProof.proof || !Array.isArray(assetProof.proof)) {
+    // Helius might return an empty proof array for certain tree configurations (e.g. canopy depth 0)
+    // or if the leaf is the root itself. The mapProofForBubblegum handles this.
+    console.warn(`Asset proof for ${cnft.id} has no proof path array or is not an array. This might be valid for certain tree states.`);
   }
 
-  const assetProof = await getHeliusAssetProof(cnft.id, rpcUrl);
-  if (!assetProof || typeof assetProof.root !== 'string' || !assetProof.root.trim() ||
-      typeof assetProof.tree_id !== 'string' || !assetProof.tree_id.trim()) { 
-    throw new Error('Failed to retrieve valid asset proof (root or tree_id missing or invalid).');
-  }
-  // Validation of proof elements happens in mapProofForBubblegum if proof is not empty
-  
+
   const merkleTreeKey = new PublicKey(assetProof.tree_id);
   const currentLeafOwner = new PublicKey(ownership.owner);
-  // Delegate defaults to owner if not present, which is what Bubblegum program expects
-  const currentLeafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : currentLeafOwner; 
+  const currentLeafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : currentLeafOwner;
 
   const [treeAuthority, _bump] = PublicKey.findProgramAddressSync(
     [merkleTreeKey.toBuffer()],
@@ -319,16 +316,8 @@ export async function transferCNft(
 
   const proofPathAsAccounts = mapProofForBubblegum(assetProof);
 
-  const transferInstructionArgs = {
-    root: bs58.decode(assetProof.root),
-    dataHash: bs58.decode(compression.data_hash),
-    creatorHash: bs58.decode(compression.creator_hash),
-    nonce: new BN(compression.leaf_id), // nonce is leaf_id (u64)
-    index: compression.leaf_id, // index is leaf_id (u32)
-  };
-  
-  const transferInstructionAccounts = {
-    treeAuthority,
+  const transferInstruction = createBubblegumTransferInstruction({
+    treeAuthority: treeAuthority,
     leafOwner: currentLeafOwner,
     leafDelegate: currentLeafDelegate,
     newLeafOwner: recipientAddress,
@@ -336,18 +325,20 @@ export async function transferCNft(
     logWrapper: SPL_NOOP_PROGRAM_ID,
     compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
     anchorRemainingAccounts: proofPathAsAccounts,
-  };
-
-  const transferInstruction = createBubblegumTransferInstruction(
-    transferInstructionAccounts,
-    transferInstructionArgs
-  );
+  }, {
+    root: bs58.decode(assetProof.root),
+    dataHash: bs58.decode(compression.data_hash),
+    creatorHash: bs58.decode(compression.creator_hash),
+    nonce: new BN(compression.leaf_id),
+    index: compression.leaf_id,
+  });
   
+  // Defensive assignment of programId if SDK fails to set it (should not be necessary with current SDK versions)
   if (!transferInstruction.programId || !(transferInstruction.programId instanceof PublicKey)) {
-     console.warn("SDK's createBubblegumTransferInstruction did not set programId or set it incorrectly. Manually setting to BUBBLEGUM_PROGRAM_ID.");
+     console.warn("SDK's createBubblegumTransferInstruction might not have set programId correctly. Manually setting to BUBBLEGUM_PROGRAM_ID.");
      transferInstruction.programId = BUBBLEGUM_PROGRAM_ID;
   }
-  
+
   const instructions: TransactionInstruction[] = [transferInstruction];
   return sendTransaction(instructions, connection, wallet);
 }
@@ -357,13 +348,13 @@ export async function burnCNft(
   connection: Connection,
   wallet: WalletContextState,
   cnft: CNft,
-  rpcUrl: string 
+  rpcUrl: string
 ): Promise<string> {
   const walletPublicKey = wallet.publicKey;
 
   if (!walletPublicKey) throw new Error("Wallet not connected for cNFT burn.");
   if (!(walletPublicKey instanceof PublicKey)) throw new Error("Invalid wallet public key. Expected instance of PublicKey for cNFT burn.");
-  
+
   if (!(BUBBLEGUM_PROGRAM_ID instanceof PublicKey)) throw new Error("Critical: BUBBLEGUM_PROGRAM_ID is not a valid PublicKey for burn.");
   if (!(SPL_NOOP_PROGRAM_ID instanceof PublicKey)) throw new Error("Critical: SPL_NOOP_PROGRAM_ID is not a PublicKey for burn.");
   if (!(SPL_ACCOUNT_COMPRESSION_PROGRAM_ID instanceof PublicKey)) throw new Error("Critical: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID is not a PublicKey for burn.");
@@ -371,63 +362,51 @@ export async function burnCNft(
   if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing for burn.");
   const { compression, ownership } = cnft.rawHeliusAsset;
 
-  if (typeof compression.data_hash !== 'string' || !compression.data_hash.trim() ||
-      typeof compression.creator_hash !== 'string' || !compression.creator_hash.trim() || 
-      typeof compression.leaf_id !== 'number') { 
-    throw new Error("Essential compression data (data_hash, creator_hash, or leaf_id) is missing or invalid from rawHeliusAsset for burn.");
-  }
-  if (typeof ownership.owner !== 'string' || !ownership.owner.trim()) {
-    throw new Error("Essential ownership data (owner) is missing or invalid from rawHeliusAsset for burn.");
-  }
+  if (typeof compression.data_hash !== 'string' || !compression.data_hash.trim()) throw new Error("Compression data_hash missing/invalid for burn.");
+  if (typeof compression.creator_hash !== 'string' || !compression.creator_hash.trim()) throw new Error("Compression creator_hash missing/invalid for burn.");
+  if (typeof compression.leaf_id !== 'number') throw new Error("Compression leaf_id missing/invalid for burn.");
+  if (typeof ownership.owner !== 'string' || !ownership.owner.trim()) throw new Error("Ownership owner missing/invalid for burn.");
 
   const assetProof = await getHeliusAssetProof(cnft.id, rpcUrl);
-  if (!assetProof || typeof assetProof.root !== 'string' || !assetProof.root.trim() ||
-      typeof assetProof.tree_id !== 'string' || !assetProof.tree_id.trim()) {
-    throw new Error('Failed to retrieve valid asset proof for burn (root or tree_id missing or invalid).');
+  if (!assetProof || typeof assetProof.root !== 'string' || !assetProof.root.trim() || typeof assetProof.tree_id !== 'string' || !assetProof.tree_id.trim()) {
+    throw new Error('Failed to retrieve valid asset proof for burn (root or tree_id missing/invalid).');
+  }
+   if (!assetProof.proof || !Array.isArray(assetProof.proof)) {
+    console.warn(`Asset proof for burn operation on ${cnft.id} has no proof path array or is not an array.`);
   }
 
   const merkleTreeKey = new PublicKey(assetProof.tree_id);
   const currentLeafOwner = new PublicKey(ownership.owner);
   const currentLeafDelegate = ownership.delegate ? new PublicKey(ownership.delegate) : currentLeafOwner;
-  
+
   const [treeAuthority, _bump] = PublicKey.findProgramAddressSync(
     [merkleTreeKey.toBuffer()],
     BUBBLEGUM_PROGRAM_ID
   );
-
-  const proofPathAsAccounts = mapProofForBubblegum(assetProof);
   
-  const burnInstructionArgs = {
+  const proofPathAsAccounts = mapProofForBubblegum(assetProof);
+
+  const burnInstruction = createBubblegumBurnInstruction({
+    treeAuthority: treeAuthority,
+    leafOwner: currentLeafOwner,
+    leafDelegate: currentLeafDelegate,
+    merkleTree: merkleTreeKey,
+    logWrapper: SPL_NOOP_PROGRAM_ID,
+    compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
+    anchorRemainingAccounts: proofPathAsAccounts,
+  }, {
     root: bs58.decode(assetProof.root),
     dataHash: bs58.decode(compression.data_hash),
     creatorHash: bs58.decode(compression.creator_hash),
     nonce: new BN(compression.leaf_id),
     index: compression.leaf_id,
-  };
-  
-  const burnInstructionAccounts = {
-    treeAuthority, 
-    leafOwner: currentLeafOwner, 
-    leafDelegate: currentLeafDelegate, 
-    merkleTree: merkleTreeKey,
-    logWrapper: SPL_NOOP_PROGRAM_ID,
-    compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
-    systemProgram: SystemProgram.programId, // Though often optional in SDK type, explicitly including
-    anchorRemainingAccounts: proofPathAsAccounts,
-  };
-  
-  const burnInstruction = createBubblegumBurnInstruction(
-    burnInstructionAccounts,
-    burnInstructionArgs
-  );
-  
+  });
+
   if (!burnInstruction.programId || !(burnInstruction.programId instanceof PublicKey)) {
-    console.warn("SDK's createBubblegumBurnInstruction did not set programId or set it incorrectly. Manually setting to BUBBLEGUM_PROGRAM_ID.");
+    console.warn("SDK's createBubblegumBurnInstruction might not have set programId correctly. Manually setting to BUBBLEGUM_PROGRAM_ID.");
     burnInstruction.programId = BUBBLEGUM_PROGRAM_ID;
   }
-  
+
   const instructions: TransactionInstruction[] = [burnInstruction];
   return sendTransaction(instructions, connection, wallet);
 }
-
-    
