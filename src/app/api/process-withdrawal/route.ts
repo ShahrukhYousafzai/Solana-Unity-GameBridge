@@ -5,6 +5,13 @@ import { getAssociatedTokenAddressSync, createTransferInstruction, TOKEN_PROGRAM
 import { getRpcUrl, type SupportedSolanaNetwork } from '@/config';
 import * as bs58 from 'bs58';
 
+// IMPORTANT FOR PRODUCTION:
+// The CUSTODIAL_WALLET_PRIVATE_KEY must be set as a secure environment variable
+// in your hosting environment (e.g., Firebase App Hosting secrets, or Cloud Function environment variables if deploying Next.js that way).
+// It should NOT be hardcoded here or committed to your repository.
+// Firebase (or your chosen hosting provider) makes this variable securely available
+// to this server-side code at runtime, without exposing it to the client.
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -30,8 +37,8 @@ export async function POST(request: Request) {
 
     const custodialWalletPrivateKeyBs58 = process.env.CUSTODIAL_WALLET_PRIVATE_KEY;
     if (!custodialWalletPrivateKeyBs58) {
-      console.error("CUSTODIAL_WALLET_PRIVATE_KEY environment variable is not set.");
-      return NextResponse.json({ success: false, message: "Server configuration error: Custodial wallet not configured." }, { status: 500 });
+      console.error("CUSTODIAL_WALLET_PRIVATE_KEY environment variable is not set on the server.");
+      return NextResponse.json({ success: false, message: "Server configuration error: Custodial wallet private key not configured." }, { status: 500 });
     }
 
     let custodialKeypair: Keypair;
@@ -40,7 +47,7 @@ export async function POST(request: Request) {
       custodialKeypair = Keypair.fromSecretKey(privateKeyBytes);
     } catch (e) {
       console.error("Failed to decode or create Keypair from CUSTODIAL_WALLET_PRIVATE_KEY:", e);
-      return NextResponse.json({ success: false, message: "Server configuration error: Invalid custodial wallet private key." }, { status: 500 });
+      return NextResponse.json({ success: false, message: "Server configuration error: Invalid custodial wallet private key format." }, { status: 500 });
     }
     
     const rpcUrl = getRpcUrl(network, process.env.NEXT_PUBLIC_HELIUS_API_KEY);
