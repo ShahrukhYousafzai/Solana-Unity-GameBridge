@@ -17,7 +17,7 @@ import {
 import { useNetwork } from "@/contexts/NetworkContext";
 import type { SupportedSolanaNetwork } from "@/config";
 import { NetworkSwitcher } from "@/components/NetworkSwitcher";
-import { CUSTODIAL_WALLET_ADDRESS, SOL_DECIMALS, HELIUS_API_KEY } from "@/config";
+import { CUSTODIAL_WALLET_ADDRESS, SOL_DECIMALS } from "@/config";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const ConnectWalletButton = dynamic(
@@ -41,10 +41,8 @@ declare global {
       config: object,
       onProgress?: (progress: number) => void
     ) => Promise<UnityInstance>;
-    unityInstance?: UnityInstance; // For direct access if needed, e.g., for debugging
-    unityBridge?: any; // The bridge object exposed by Next.js
-    // This object is expected to be set by your Unity game's scripts
-    // if Unity needs to call JS functions *not* on unityBridge, or if Unity itself provides this
+    unityInstance?: UnityInstance;
+    unityBridge?: any;
     UnityGame?: {
       SendMessage: (gameObjectName: string, methodName: string, message: string | number | object) => void;
     };
@@ -85,7 +83,6 @@ export default function HomePage() {
       console.log(`[UnityBridge] Sending via unityInstance: ${gameObjectName}.${methodName}`, message);
       unityInstance.SendMessage(gameObjectName, methodName, msgStr);
     }
-    // Fallback to window.UnityGame if Unity sets it up (less common if Next.js manages instance)
     else if (window.UnityGame && typeof window.UnityGame.SendMessage === 'function') {
       console.log(`[UnityBridge] Sending via window.UnityGame: ${gameObjectName}.${methodName}`, message);
       window.UnityGame.SendMessage(gameObjectName, methodName, msgStr);
@@ -98,20 +95,19 @@ export default function HomePage() {
   useEffect(() => {
     if (typeof window.createUnityInstance === 'function' && canvasRef.current) {
       const unityConfig = {
-        dataUrl: "/Build/solblaze-unity-build.data", // ENSURE THIS MATCHES YOUR UNITY BUILD FILENAME
-        frameworkUrl: "/Build/solblaze-unity-build.framework.js", // ENSURE THIS MATCHES YOUR UNITY BUILD FILENAME
-        codeUrl: "/Build/solblaze-unity-build.wasm", // ENSURE THIS MATCHES YOUR UNITY BUILD FILENAME
-        // companyName: "YourCompany", // Optional: From your Unity project settings
-        // productName: "SolBlaze", // Optional: From your Unity project settings
+        dataUrl: "/Build/solblaze-unity-build.data",
+        frameworkUrl: "/Build/solblaze-unity-build.framework.js",
+        codeUrl: "/Build/solblaze-unity-build.wasm",
+        // companyName: "YourCompany", 
+        // productName: "SolBlaze", 
       };
 
       window.createUnityInstance(canvasRef.current, unityConfig, (progress) => {
         setUnityLoadingProgress(progress * 100);
       }).then((instance) => {
         setUnityInstance(instance);
-        window.unityInstance = instance; // Make it globally accessible for debugging
+        window.unityInstance = instance; 
         setIsUnityLoading(false);
-        // instance.SetFullscreen(1); // Optional: Auto-fullscreen after load
         sendToUnity("GameManager", "OnUnityReady", {});
       }).catch((error) => {
         console.error("Error creating Unity instance:", error);
@@ -126,7 +122,7 @@ export default function HomePage() {
              setIsUnityLoading(false);
              toast({ title: "Game Loader Error", description: "Could not initialize Unity game loader. Check browser console and ensure Unity build files and loader script are present.", variant: "destructive", duration: 10000 });
         }
-      }, 5000); // Wait 5 seconds
+      }, 5000); 
       return () => clearTimeout(timer);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -168,7 +164,7 @@ export default function HomePage() {
       if (heliusWarning) {
         const isApiKeyError = heliusWarning.toLowerCase().includes("access forbidden") || heliusWarning.toLowerCase().includes("api key");
         const toastVariant = isApiKeyError ? "destructive" : "default";
-        toast({ title: "API Warning", description: heliusWarning, variant: toastVariant });
+        toast({ title: "API Warning", description: heliusWarning, variant: toastVariant, duration: 7000 });
         sendToUnity("GameManager", "OnHeliusWarning", { warning: heliusWarning, isError: isApiKeyError });
       }
 
@@ -240,8 +236,8 @@ export default function HomePage() {
           sendToUnity("GameManager", "OnUserNFTsReceived", { error: "Wallet not connected", nfts: [], cnfts: [] });
           return;
         }
-        if (!isLoadingAssets) await loadUserAssets(); // Data sent via OnAssetsLoaded
-        sendToUnity("GameManager", "OnUserNFTsRequested", {});
+        if (!isLoadingAssets) await loadUserAssets(); 
+        sendToUnity("GameManager", "OnUserNFTsRequested", { nfts, cnfts }); // Send current state back
       },
       getUserTokens: async () => {
          if (!publicKey) {
@@ -249,17 +245,17 @@ export default function HomePage() {
           return;
         }
         if (!isLoadingAssets) {
-          await fetchSolBalance();
-          await loadUserAssets(); // Data sent via OnAssetsLoaded
+          await fetchSolBalance(); 
+          await loadUserAssets(); 
         }
-        sendToUnity("GameManager", "OnUserTokensRequested", {});
+        sendToUnity("GameManager", "OnUserTokensRequested", { tokens, solBalance }); // Send current state back
       },
       getSolBalance: async () => {
         if (!publicKey) {
           sendToUnity("GameManager", "OnSolBalanceUpdateFailed", { error: "Wallet not connected" });
           return 0;
         }
-        return fetchSolBalance(); // Data sent via OnSolBalanceUpdated
+        return fetchSolBalance(); 
       },
       transferSOL: async (amountSol: number, toAddress: string) => {
         if (isSubmittingTransaction) return sendToUnity("GameManager", "OnTransactionError", { action: "transfer_sol", error: "Transaction in progress" });
@@ -354,7 +350,7 @@ export default function HomePage() {
           sendToUnity("GameManager", "OnTransactionSubmitting", { action: "burn_sol", submitting: false });
         }
       },
-      burnNFT: async (mint: string, amount?: number) => {
+      burnNFT: async (mint: string, amount?: number) => { // Amount is optional, primarily for SPL tokens
         if (isSubmittingTransaction) return sendToUnity("GameManager", "OnTransactionError", { action: "burn_asset", error: "Transaction in progress" });
         const asset = allFetchedAssets.find(a => a.id === mint);
         if (!asset) return sendToUnity("GameManager", "OnTransactionError", { action: "burn_asset", error: "Asset not found in wallet" });
@@ -456,22 +452,27 @@ export default function HomePage() {
         if (!publicKey) return sendToUnity("GameManager", "OnWithdrawalResponse", { success: false, message: "Wallet not connected", action: "withdraw_funds", tokenMint: tokenMintOrSol });
         if (grossAmount <= 0) return sendToUnity("GameManager", "OnWithdrawalResponse", { success: false, message: "Amount must be positive", action: "withdraw_funds", tokenMint: tokenMintOrSol });
 
-        const taxRate = 0.05; 
-        const taxAmount = grossAmount * taxRate;
-        const netAmount = grossAmount - taxAmount;
-
-        if (netAmount <= 0) {
-             sendToUnity("GameManager", "OnWithdrawalResponse", { success: false, message: "Net withdrawal amount must be positive after tax.", action: "withdraw_funds", tokenMint: tokenMintOrSol });
-             toast({ title: "Withdrawal Error", description: "Net withdrawal amount too low after tax.", variant: "destructive"});
-             return;
-        }
+        // Tax calculation is done by the backend in this model, frontend sends gross amount
+        // However, to maintain consistency with previous version or if frontend needs to display net, it can be calculated here too.
+        // For this version, the backend API handles the net calculation from the gross amount sent.
+        // Let's adjust to send the grossAmount to the API. The API will calculate net for transfer.
+        // The API `netAmount` parameter will be interpreted as gross for calculation on the backend side if it's a withdrawal, or directly net.
+        // For clarity, let's rename API `netAmount` to `amountForProcessing` or similar in API.
+        // For now, keeping it as `netAmount` on API, and frontend passes gross. API will then treat it as gross.
+        // OR, frontend calculates net and passes net. The prompt says "5% tax deducted", backend signs.
+        // Let's stick to the prompt: backend deducts. So frontend sends GROSS, backend calculates NET.
+        // The `initiateWithdrawalRequest` expects a `netAmount` argument, which in this case will be the gross amount.
+        // The backend will then calculate the actual net amount from this.
+        // To avoid confusion in `initiateWithdrawalRequest`, let's send `grossAmount` to it,
+        // and it will pass this as `netAmount` to the API route, and the API route uses this for calculations.
 
         setIsSubmittingTransaction(true);
         sendToUnity("GameManager", "OnTransactionSubmitting", { action: "withdraw_funds", submitting: true, tokenMint: tokenMintOrSol });
         try {
           let result: WithdrawalResponse;
           if (tokenMintOrSol.toUpperCase() === "SOL") {
-            result = await initiateWithdrawalRequest(publicKey.toBase58(), netAmount, currentNetwork); // netAmount is SOL units
+            // API expects `netAmount` to be the gross SOL amount for withdrawal, it will calculate net
+            result = await initiateWithdrawalRequest(publicKey.toBase58(), grossAmount, currentNetwork); 
           } else {
             const token = allFetchedAssets.find(a => a.id === tokenMintOrSol && a.type === 'token') as SplToken | undefined;
             if (!token) {
@@ -479,7 +480,8 @@ export default function HomePage() {
                setIsSubmittingTransaction(false); sendToUnity("GameManager", "OnTransactionSubmitting", { action: "withdraw_funds", submitting: false, tokenMint: tokenMintOrSol });
                return;
             }
-             result = await initiateWithdrawalRequest(publicKey.toBase58(), netAmount, currentNetwork, token); // netAmount is token units
+            // API expects `netAmount` to be the gross token amount for withdrawal
+             result = await initiateWithdrawalRequest(publicKey.toBase58(), grossAmount, currentNetwork, token); 
           }
 
           if (result.success) {
@@ -520,7 +522,7 @@ export default function HomePage() {
     };
   }, [
     connected, publicKey, currentNetwork, rpcUrl, connection, wallet,
-    nfts, cnfts, tokens, allFetchedAssets,
+    nfts, cnfts, tokens, allFetchedAssets, solBalance, // Added solBalance
     connectWalletAdapter, disconnectWalletAdapter, select, sendTransaction, signTransaction,
     loadUserAssets, fetchSolBalance, setCurrentNetwork, toast, sendToUnity,
     isSubmittingTransaction, isLoadingAssets, unityInstance
@@ -531,15 +533,7 @@ export default function HomePage() {
     <div className="flex flex-col min-h-screen bg-background text-foreground overflow-hidden">
        <header className="sticky top-0 z-[100] w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container flex h-16 items-center justify-between px-4 md:px-6 mx-auto">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <svg width="28" height="28" viewBox="0 0 100 100" fill="hsl(var(--primary))" xmlns="http://www.w3.org/2000/svg">
-                <path d="M50 0L61.226 23.407L87.364 26.795L70.957 44.09L73.607 70.039L50 58.36L26.393 70.039L29.043 44.09L12.636 26.795L38.774 23.407L50 0ZM50 28.778L43.111 54.444H71.111L64.222 28.778H50ZM28.889 60L35.778 85.667L50 73.333L64.222 85.667L71.111 60H28.889Z"/>
-              </svg>
-              <h1 className="text-xl font-bold text-primary">SolBlaze GameBridge</h1>
-            </div>
-            <NetworkSwitcher />
-          </div>
+          <NetworkSwitcher />
           <ConnectWalletButton />
         </div>
       </header>
@@ -568,8 +562,8 @@ export default function HomePage() {
             ref={canvasRef} 
             id="unity-canvas" 
             className="w-full h-full" 
-            style={{ display: isUnityLoading ? 'none' : 'block' }}
-            tabIndex={-1} // To allow canvas to receive focus for keyboard input if Unity needs it
+            style={{ display: isUnityLoading ? 'none' : 'block', background: 'transparent' }} // Ensure canvas is transparent if game doesn't fill
+            tabIndex={-1} 
         ></canvas>
       </main>
     </div>

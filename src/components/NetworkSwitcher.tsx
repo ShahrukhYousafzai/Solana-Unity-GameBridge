@@ -10,15 +10,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useNetwork } from "@/contexts/NetworkContext";
-import type { SupportedSolanaNetwork } from "@/config"; // Uses the string literal type
+import type { SupportedSolanaNetwork } from "@/config"; 
 import { Globe } from "lucide-react";
 
 
 const networkOptions: { value: SupportedSolanaNetwork; label: string }[] = [
   { value: 'mainnet-beta', label: "Mainnet" },
   { value: 'devnet', label: "Devnet" },
-  // Add Testnet if supported and Helius has an endpoint for it
-  // { value: 'testnet', label: "Testnet" },
+  { value: 'testnet', label: "Testnet" },
 ];
 
 export const NetworkSwitcher: React.FC = () => {
@@ -47,3 +46,4 @@ export const NetworkSwitcher: React.FC = () => {
   );
 };
 
+    

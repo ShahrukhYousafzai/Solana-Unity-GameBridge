@@ -7,7 +7,7 @@ import {
   TransactionMessage,
   type AccountMeta,
   TransactionInstruction,
-  SendTransactionError, // Ensure this is imported
+  SendTransactionError,
   type Commitment,
   Keypair,
   LAMPORTS_PER_SOL,
@@ -36,13 +36,12 @@ import {
 import { fetchHeliusAssetProof } from "@/lib/asset-loader";
 import BN from 'bn.js';
 import * as bs58 from "bs58";
-import { CUSTODIAL_WALLET_ADDRESS, SOL_BURN_ADDRESS, SOL_DECIMALS, WITHDRAWAL_TAX_PERCENTAGE } from "@/config";
+import { CUSTODIAL_WALLET_ADDRESS, SOL_BURN_ADDRESS, SOL_DECIMALS } from "@/config";
 
 // UMI imports for NFT minting
 import { createUmi } from '@metaplex-foundation/umi-bundle-defaults';
 import { walletAdapterIdentity } from '@metaplex-foundation/umi-signer-wallet-adapters';
 import { mplTokenMetadata } from '@metaplex-foundation/mpl-token-metadata';
-// import {行为包gum} from '@metaplex-foundation/mpl-bubblegum'; // This seems to be a typo or non-English name, UMI typically uses English names for packages/modules
 import { percentAmount, generateSigner, transactionBuilder, some } from '@metaplex-foundation/umi';
 
 
@@ -50,7 +49,7 @@ async function sendTransaction(
   instructions: TransactionInstruction[],
   connection: Connection,
   wallet: WalletContextState,
-  signers?: Keypair[] // For UMI, signers are handled differently with transactionBuilder
+  signers?: Keypair[] 
 ): Promise<string> {
   const payerPublicKey = wallet.publicKey;
   const signTransactionFn = wallet.signTransaction;
@@ -94,7 +93,6 @@ async function sendTransaction(
     const versionedTransaction = new VersionedTransaction(messageV0);
 
     if (signers && signers.length > 0) {
-      // This signing path is for traditional Keypair signers, UMI builder has its own signing.
       versionedTransaction.sign(signers);
     }
 
@@ -178,7 +176,7 @@ export async function transferNft(
   }
 
   const mintPublicKey = new PublicKey(nft.id);
-  const tokenProgramPk = TOKEN_PROGRAM_ID; // Standard NFTs use TOKEN_PROGRAM_ID
+  const tokenProgramPk = TOKEN_PROGRAM_ID; 
 
   const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey, false, tokenProgramPk);
   const recipientAta = getAssociatedTokenAddressSync(mintPublicKey, recipientAddress, false, tokenProgramPk);
@@ -203,7 +201,7 @@ export async function transferNft(
       sourceAta,
       recipientAta,
       ownerPublicKey,
-      1, // NFTs are non-fungible, amount is 1
+      1, 
       [],
       tokenProgramPk
     )
@@ -226,7 +224,7 @@ export async function transferSplToken(
   }
 
   const mintPublicKey = new PublicKey(token.id);
-  const tokenProgramPk = new PublicKey(token.tokenProgramId); // Use the specific program ID for the token
+  const tokenProgramPk = new PublicKey(token.tokenProgramId); 
   const rawAmount = BigInt(Math.round(amount * (10 ** token.decimals)));
 
   const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey, false, tokenProgramPk);
@@ -270,8 +268,7 @@ export async function burnNft(
   if (!ownerPublicKey) throw new Error("Wallet not connected.");
 
   const mintPublicKey = new PublicKey(nft.id);
-  const tokenProgramPk = TOKEN_PROGRAM_ID; // Standard NFTs use TOKEN_PROGRAM_ID
-  // Get the ATA for the NFT. If nft.tokenAddress is not populated, fallback to calculating it.
+  const tokenProgramPk = TOKEN_PROGRAM_ID; 
   const ownerTokenAccount = nft.tokenAddress ? new PublicKey(nft.tokenAddress) : getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey, false, tokenProgramPk);
 
 
@@ -280,14 +277,14 @@ export async function burnNft(
       ownerTokenAccount,
       mintPublicKey,
       ownerPublicKey,
-      1, // Burn 1 unit for an NFT
+      1, 
       [],
       tokenProgramPk
     ),
-    createCloseAccountInstruction( // Close the ATA after burning
+    createCloseAccountInstruction( 
       ownerTokenAccount,
-      ownerPublicKey, // Destination for remaining lamports
-      ownerPublicKey, // Authority to close
+      ownerPublicKey, 
+      ownerPublicKey, 
       [],
       tokenProgramPk
     )
@@ -306,7 +303,7 @@ export async function burnSplToken(
   if (!ownerPublicKey) throw new Error("Wallet not connected.");
 
   const mintPublicKey = new PublicKey(token.id);
-  const tokenProgramPk = new PublicKey(token.tokenProgramId); // Use the specific program ID
+  const tokenProgramPk = new PublicKey(token.tokenProgramId); 
   const rawAmount = BigInt(Math.round(amount * (10 ** token.decimals)));
   const ownerTokenAccount = token.tokenAddress ? new PublicKey(token.tokenAddress) : getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey, false, tokenProgramPk);
 
@@ -321,14 +318,12 @@ export async function burnSplToken(
     )
   ];
 
-  // Optionally, close the ATA if the entire balance is burned
-  // Check if the rawAmount to burn equals the token's rawBalance
   if (rawAmount === token.rawBalance) {
     instructions.push(
       createCloseAccountInstruction(
         ownerTokenAccount,
-        ownerPublicKey, // Lamports destination
-        ownerPublicKey, // Authority
+        ownerPublicKey, 
+        ownerPublicKey, 
         [],
         tokenProgramPk
       )
@@ -338,13 +333,11 @@ export async function burnSplToken(
   return sendTransaction(instructions, connection, wallet);
 }
 
-// Helper for cNFT proof
 const mapProofForBubblegum = (assetProof: { proof: string[] }): AccountMeta[] => {
   if (!assetProof.proof || !Array.isArray(assetProof.proof)) {
     console.warn("[BubblegumUtil] Asset proof is missing or not an array. Returning empty proof path.");
     return [];
   }
-  // Filter out any empty strings or invalid pubkeys from the proof array
   const validProofPubkeys = assetProof.proof.filter(p => typeof p === 'string' && p.trim() !== '');
 
   return validProofPubkeys.map((node) => ({
@@ -359,7 +352,7 @@ export async function transferCNft(
   wallet: WalletContextState,
   cnft: CNft,
   recipientAddress: PublicKey,
-  rpcUrl: string // Helius RPC URL for fetching proof
+  rpcUrl: string 
 ): Promise<string> {
   const walletPublicKey = wallet.publicKey;
 
@@ -370,7 +363,6 @@ export async function transferCNft(
   if (!cnft.rawHeliusAsset.compression) throw new Error("cNFT compression data is missing for transfer.");
   const { compression } = cnft.rawHeliusAsset;
 
-  // Validate compression data fields
   if (typeof compression.data_hash !== 'string' || !compression.data_hash.trim()) throw new Error("Compression data_hash missing/invalid.");
   if (typeof compression.creator_hash !== 'string' || !compression.creator_hash.trim()) throw new Error("Compression creator_hash missing/invalid.");
   if (typeof compression.leaf_id !== 'number') throw new Error("Compression leaf_id missing/invalid (not a number).");
@@ -392,7 +384,7 @@ export async function transferCNft(
     root: [...bs58.decode(assetProof.root)],
     dataHash: [...bs58.decode(compression.data_hash)],
     creatorHash: [...bs58.decode(compression.creator_hash)],
-    nonce: new BN(compression.leaf_id), // Bubblegum uses BN for nonce
+    nonce: new BN(compression.leaf_id), 
     index: compression.leaf_id,
   };
 
@@ -409,7 +401,6 @@ export async function transferCNft(
 
   const transferInstruction = createBubblegumTransferInstruction(transferInstructionAccounts, transferArgs);
   
-  // Ensure programId is explicitly set if not by create instruction
   if (!transferInstruction.programId || !(transferInstruction.programId instanceof PublicKey)) {
      transferInstruction.programId = BUBBLEGUM_PROGRAM_ID;
   }
@@ -424,7 +415,7 @@ export async function burnCNft(
   connection: Connection,
   wallet: WalletContextState,
   cnft: CNft,
-  rpcUrl: string // Helius RPC URL for fetching proof
+  rpcUrl: string 
 ): Promise<string> {
   const walletPublicKey = wallet.publicKey;
 
@@ -480,7 +471,6 @@ export async function burnCNft(
   return sendTransaction(instructions, connection, wallet);
 }
 
-// Deposit SPL Token to Custodial Wallet
 export async function depositSplToken(
   connection: Connection,
   wallet: WalletContextState,
@@ -508,14 +498,13 @@ export async function depositSplToken(
 
   const instructions: TransactionInstruction[] = [];
 
-  // Check if recipient ATA exists, create if not
   const recipientAtaInfo = await connection.getAccountInfo(recipientAta);
   if (!recipientAtaInfo) {
     instructions.push(
       createAssociatedTokenAccountInstruction(
-        ownerPublicKey, // Payer for ATA creation
+        ownerPublicKey, 
         recipientAta,
-        custodialPublicKey, // Owner of the new ATA
+        custodialPublicKey, 
         mintPublicKey,
         tokenProgramPk
       )
@@ -526,7 +515,7 @@ export async function depositSplToken(
     createSplTransferInstruction(
       sourceAta,
       recipientAta,
-      ownerPublicKey, // Authority to transfer from source
+      ownerPublicKey, 
       rawAmount,
       [],
       tokenProgramPk
@@ -543,34 +532,27 @@ export interface WithdrawalResponse {
   signature?: string;
 }
 
-// Used for both SPL Token and SOL withdrawals from Custodial Wallet
 export async function initiateWithdrawalRequest(
   userWalletAddress: string,
-  netAmount: number, // For SPL tokens, this is token units; for SOL, this is SOL units (after tax)
+  grossAmount: number, // This is the gross amount before tax
   currentNetwork: SupportedSolanaNetwork,
-  token?: SplToken // Optional: only for SPL token withdrawals
+  token?: SplToken 
 ): Promise<WithdrawalResponse> {
-  console.log(`[initiateWithdrawalRequest] User ${userWalletAddress} requested withdrawal.`);
-  console.log(`  Net Amount to User: ${netAmount} ${token ? token.symbol : 'SOL'}`);
-  if (token) {
-    console.log(`  Token Mint: ${token.id}, Decimals: ${token.decimals}, Program ID: ${token.tokenProgramId}`);
-  }
-  console.log(`  Network: ${currentNetwork}`);
-
+  console.log(`[initiateWithdrawalRequest] User ${userWalletAddress} requested withdrawal of ${grossAmount} ${token ? token.symbol : 'SOL'} (gross).`);
+  
   const payload: any = {
     userWalletAddress,
-    netAmount, // This will be lamports for SOL, token units for SPL at API level
+    grossAmount, // Send gross amount to API; API calculates net
     network: currentNetwork,
   };
 
-  if (token) { // SPL Token withdrawal
+  if (token) { 
     payload.tokenMint = token.id;
     payload.tokenDecimals = token.decimals;
     payload.tokenProgramId = token.tokenProgramId;
     payload.isSolWithdrawal = false;
-  } else { // SOL withdrawal
-    // API expects netAmount in lamports for SOL
-    payload.netAmount = Math.round(netAmount * LAMPORTS_PER_SOL); 
+  } else { 
+    // For SOL, grossAmount is in SOL units. API will handle lamport conversion & tax.
     payload.isSolWithdrawal = true;
   }
 
@@ -584,7 +566,6 @@ export async function initiateWithdrawalRequest(
     const result = await response.json();
 
     if (!response.ok) {
-      // Use message from backend if available, otherwise provide a default
       return { success: false, message: result.message || `Backend withdrawal request failed with status: ${response.status}` };
     }
     return { success: true, message: result.message || "Withdrawal processed.", signature: result.signature };
@@ -594,12 +575,11 @@ export async function initiateWithdrawalRequest(
   }
 }
 
-// Transfer SOL from user's wallet
 export async function transferSol(
   connection: Connection,
   wallet: WalletContextState,
   recipientAddress: PublicKey,
-  amountSol: number // Amount in SOL
+  amountSol: number 
 ): Promise<string> {
   const ownerPublicKey = wallet.publicKey;
   if (!ownerPublicKey) throw new Error("Wallet not connected for SOL transfer.");
@@ -623,11 +603,10 @@ export async function transferSol(
   return sendTransaction(instructions, connection, wallet);
 }
 
-// Deposit SOL from user's wallet to Custodial Wallet
 export async function depositSol(
   connection: Connection,
   wallet: WalletContextState,
-  amountSol: number, // Amount in SOL
+  amountSol: number, 
   custodialWalletAddressString: string | undefined
 ): Promise<string> {
   const ownerPublicKey = wallet.publicKey;
@@ -657,11 +636,10 @@ export async function depositSol(
   return sendTransaction(instructions, connection, wallet);
 }
 
-// "Burn" SOL by sending to incinerator address from user's wallet
 export async function burnSol(
   connection: Connection,
   wallet: WalletContextState,
-  amountSol: number // Amount in SOL
+  amountSol: number 
 ): Promise<string> {
   const ownerPublicKey = wallet.publicKey;
   if (!ownerPublicKey) throw new Error("Wallet not connected for SOL burn.");
@@ -684,7 +662,6 @@ export async function burnSol(
 }
 
 
-// Mint a new Standard NFT (using UMI)
 export async function mintStandardNft(
   connection: Connection,
   wallet: WalletContextState,
@@ -697,7 +674,7 @@ export async function mintStandardNft(
   }
 
   const umi = createUmi(connection.rpcEndpoint)
-    .use(walletAdapterIdentity(wallet as any)) // Cast to any if WalletContextState is not directly compatible
+    .use(walletAdapterIdentity(wallet as any)) 
     .use(mplTokenMetadata());
 
   const mint = generateSigner(umi);
@@ -710,9 +687,8 @@ export async function mintStandardNft(
         name: name,
         symbol: symbol,
         uri: metadataUri,
-        sellerFeeBasisPoints: percentAmount(5.5, 2), // Example 5.5% royalty
+        sellerFeeBasisPoints: percentAmount(5.5, 2), 
         isCollection: false,
-        // tokenStandard: mplTokenMetadata.TokenStandard.NonFungible, // Default for createV1
       })
     );
   
@@ -737,3 +713,4 @@ export async function mintStandardNft(
   return signature;
 }
 
+    
