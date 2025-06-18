@@ -1,15 +1,17 @@
 
 // This is where the Helius API key is read from the environment variables.
 // Ensure NEXT_PUBLIC_HELIUS_API_KEY is set in your .env.local file.
-export const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY; 
+export const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY;
 
 // This is where the Custodial Wallet Address is read from environment variables.
 // Ensure NEXT_PUBLIC_CUSTODIAL_WALLET_ADDRESS is set in your .env.local file.
 export const CUSTODIAL_WALLET_ADDRESS = process.env.NEXT_PUBLIC_CUSTODIAL_WALLET_ADDRESS;
+
 // Server-side private key for the custodial wallet.
-// IMPORTANT: This should be set in your server environment variables, NOT prefixed with NEXT_PUBLIC_ for security.
-// For local development, you can add it to .env.local (e.g., CUSTODIAL_WALLET_PRIVATE_KEY=your_base58_encoded_private_key)
-// but ensure .env.local is in .gitignore and this key is managed securely in production.
+// IMPORTANT: This should be set in your server environment variables (e.g., in .env.local for development,
+// or in your hosting provider's secret management for production).
+// It MUST NOT be prefixed with NEXT_PUBLIC_ for security.
+// The API route /api/process-withdrawal/route.ts uses process.env.CUSTODIAL_WALLET_PRIVATE_KEY.
 export const CUSTODIAL_WALLET_PRIVATE_KEY_FOR_SERVER = process.env.CUSTODIAL_WALLET_PRIVATE_KEY;
 
 
