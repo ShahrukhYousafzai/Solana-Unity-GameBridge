@@ -7,7 +7,8 @@ import {
   TransactionMessage,
   type AccountMeta,
   TransactionInstruction,
-  type SendTransactionError,
+  type SendTransactionError, // Import SendTransactionError
+  type Commitment,
 } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
@@ -15,8 +16,8 @@ import {
   createBurnInstruction as createSplBurnInstruction,
   createCloseAccountInstruction,
   createAssociatedTokenAccountInstruction,
-  TOKEN_PROGRAM_ID, // Added for default
-  // TOKEN_2022_PROGRAM_ID, // Not strictly needed here if passed in token object
+  TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID, 
 } from "@solana/spl-token";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import type { Nft, CNft, SplToken } from "@/types/solana";
@@ -69,9 +70,6 @@ async function sendTransaction(
   try {
     const latestBlockhash = await connection.getLatestBlockhash();
     if (!latestBlockhash || !latestBlockhash.blockhash) {
-      // This error was being highlighted by Next.js overlay, but the root cause was simulation failure.
-      // The actual simulation failure should be caught below.
-      // If this *still* triggers, it means blockhash fetching failed independently.
       throw new Error("Failed to get recent blockhash from connection for transaction.");
     }
 
@@ -83,44 +81,68 @@ async function sendTransaction(
 
     const versionedTransaction = new VersionedTransaction(messageV0);
     const signedTransaction = await signTransactionFn(versionedTransaction);
-
+    
+    console.log("[sendTransaction] Sending transaction with skipPreflight: false, maxRetries: 0");
     signature = await connection.sendTransaction(signedTransaction, {
       skipPreflight: false, 
       maxRetries: 0, 
     });
+    console.log("[sendTransaction] Transaction sent, signature:", signature);
 
+    console.log("[sendTransaction] Confirming transaction with signature:", signature);
     const confirmation = await connection.confirmTransaction({
       signature,
       blockhash: latestBlockhash.blockhash,
       lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
-    }, "confirmed");
+    }, "confirmed" as Commitment);
+    console.log("[sendTransaction] Transaction confirmation result:", confirmation);
+
 
     if (confirmation.value.err) {
-      console.error("Transaction confirmation error for signature", signature, ":", confirmation.value.err);
-      let logs;
+      console.error("[sendTransaction] Transaction confirmation error for signature", signature, ":", confirmation.value.err);
+      let txLogs: string[] | null | undefined;
       try {
         const txResponse = await connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
-        logs = txResponse?.meta?.logMessages;
-        console.error("Transaction logs:", logs);
+        txLogs = txResponse?.meta?.logMessages;
+        console.error("[sendTransaction] Transaction logs from getTransaction:", txLogs);
       } catch (logError) {
-        console.error("Failed to fetch transaction logs for failed confirmation:", logError);
+        console.error("[sendTransaction] Failed to fetch transaction logs for failed confirmation:", logError);
       }
-      throw new Error(`Transaction failed to confirm: ${JSON.stringify(confirmation.value.err)}. Logs: ${logs ? JSON.stringify(logs) : "Could not fetch logs."}`);
+      throw new Error(`Transaction failed to confirm: ${JSON.stringify(confirmation.value.err)}. Logs: ${txLogs ? JSON.stringify(txLogs) : "Could not fetch logs."}`);
     }
+    console.log("[sendTransaction] Transaction successfully confirmed:", signature);
     return signature;
 
   } catch (error: any) {
-    let logs: string[] | undefined;
-    // Check if it's a SendTransactionError to get logs
-    if (typeof error.getLogs === 'function') {
-      logs = error.getLogs();
+    let logsContent: string[] | null = null;
+
+    if (error instanceof SendTransactionError) {
+      logsContent = error.logs;
+    } else if (typeof error.getLogs === 'function') {
+      try {
+        const potentialLogs = error.getLogs();
+        if (Array.isArray(potentialLogs)) {
+          logsContent = potentialLogs.filter((l: any) => typeof l === 'string');
+        } else if (potentialLogs !== null && potentialLogs !== undefined) {
+          console.warn("[sendTransaction] error.getLogs() did not return an array or null:", potentialLogs);
+        }
+      } catch (e) {
+        console.warn("[sendTransaction] Failed to execute or process error.getLogs():", e);
+      }
     }
     
     const errorMessage = `Transaction failed: ${error.message || JSON.stringify(error)}`;
-    const logsMessage = logs ? `\nLogs:\n${logs.join('\n')}` : '\n(No specific transaction logs available or error was not a SendTransactionError)';
+    let logsMessage: string;
+
+    if (logsContent && logsContent.length > 0) {
+      logsMessage = `\nLogs:\n${logsContent.join('\n')}`;
+    } else {
+      logsMessage = '\n(No specific transaction logs available or logs were empty/not in expected array format)';
+    }
     
-    console.error(errorMessage + logsMessage, error); // Log the original error object too
-    throw new Error(errorMessage + logsMessage);
+    const fullError = errorMessage + logsMessage;
+    console.error("[sendTransaction] Full error details:", fullError, "Original error object:", error);
+    throw new Error(fullError);
   }
 }
 
@@ -128,7 +150,7 @@ async function sendTransaction(
 export async function transferNft(
   connection: Connection,
   wallet: WalletContextState,
-  nft: Nft, // Assuming standard NFTs use TOKEN_PROGRAM_ID
+  nft: Nft, 
   recipientAddress: PublicKey
 ): Promise<string> {
   const ownerPublicKey = wallet.publicKey;
@@ -138,8 +160,7 @@ export async function transferNft(
   }
 
   const mintPublicKey = new PublicKey(nft.id);
-  // For standard NFTs, TOKEN_PROGRAM_ID is used.
-  const tokenProgramPk = TOKEN_PROGRAM_ID; 
+  const tokenProgramPk = TOKEN_PROGRAM_ID; // Standard NFTs use TOKEN_PROGRAM_ID
 
   const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey, false, tokenProgramPk);
   const recipientAta = getAssociatedTokenAddressSync(mintPublicKey, recipientAddress, false, tokenProgramPk);
@@ -154,7 +175,7 @@ export async function transferNft(
         recipientAta,
         recipientAddress,
         mintPublicKey,
-        tokenProgramPk // Specify token program ID
+        tokenProgramPk 
       )
     );
   }
@@ -164,12 +185,12 @@ export async function transferNft(
       sourceAta,
       recipientAta,
       ownerPublicKey,
-      1,
+      1, // Amount for NFTs is 1
       [],
-      tokenProgramPk // Specify token program ID
+      tokenProgramPk 
     )
   );
-
+  console.log("[transferNft] Instructions prepared:", JSON.stringify(instructions.map(ix => ({programId: ix.programId.toBase58(), keys: ix.keys.map(k=>k.pubkey.toBase58())})), null, 2));
   return sendTransaction(instructions, connection, wallet);
 }
 
@@ -187,7 +208,7 @@ export async function transferSplToken(
   }
 
   const mintPublicKey = new PublicKey(token.id);
-  const tokenProgramPk = new PublicKey(token.tokenProgramId); // Use the token's specific program ID
+  const tokenProgramPk = new PublicKey(token.tokenProgramId); 
   const rawAmount = BigInt(Math.round(amount * (10 ** token.decimals)));
 
   const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey, false, tokenProgramPk);
@@ -199,11 +220,11 @@ export async function transferSplToken(
   if (!recipientAtaInfo) {
     instructions.push(
       createAssociatedTokenAccountInstruction(
-        ownerPublicKey, // payer
-        recipientAta,   // ata
-        recipientAddress, // owner
-        mintPublicKey,  // mint
-        tokenProgramPk  // token program id
+        ownerPublicKey, 
+        recipientAta,   
+        recipientAddress, 
+        mintPublicKey,  
+        tokenProgramPk  
       )
     );
   }
@@ -215,24 +236,23 @@ export async function transferSplToken(
       ownerPublicKey,
       rawAmount,
       [],
-      tokenProgramPk // token program id
+      tokenProgramPk 
     )
   );
-
+  console.log("[transferSplToken] Instructions prepared:", JSON.stringify(instructions.map(ix => ({programId: ix.programId.toBase58(), keys: ix.keys.map(k=>k.pubkey.toBase58())})), null, 2));
   return sendTransaction(instructions, connection, wallet);
 }
 
 export async function burnNft(
   connection: Connection,
   wallet: WalletContextState,
-  nft: Nft // Assuming standard NFTs use TOKEN_PROGRAM_ID
+  nft: Nft 
 ): Promise<string> {
   const ownerPublicKey = wallet.publicKey;
   if (!ownerPublicKey) throw new Error("Wallet not connected.");
 
   const mintPublicKey = new PublicKey(nft.id);
-  // For standard NFTs, TOKEN_PROGRAM_ID is used.
-  const tokenProgramPk = TOKEN_PROGRAM_ID; 
+  const tokenProgramPk = TOKEN_PROGRAM_ID; // Standard NFTs use TOKEN_PROGRAM_ID
   const ownerTokenAccount = nft.tokenAddress ? new PublicKey(nft.tokenAddress) : getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey, false, tokenProgramPk);
 
 
@@ -241,18 +261,19 @@ export async function burnNft(
       ownerTokenAccount,
       mintPublicKey,
       ownerPublicKey,
-      1,
+      1, // Amount for NFTs is 1
       [],
-      tokenProgramPk // Specify token program ID
+      tokenProgramPk 
     ),
     createCloseAccountInstruction(
       ownerTokenAccount,
-      ownerPublicKey, // Destination for remaining SOL
-      ownerPublicKey, // Authority
+      ownerPublicKey, 
+      ownerPublicKey, 
       [],
-      tokenProgramPk // Specify token program ID
+      tokenProgramPk 
     )
   ];
+  console.log("[burnNft] Instructions prepared:", JSON.stringify(instructions.map(ix => ({programId: ix.programId.toBase58(), keys: ix.keys.map(k=>k.pubkey.toBase58())})), null, 2));
   return sendTransaction(instructions, connection, wallet);
 }
 
@@ -266,7 +287,7 @@ export async function burnSplToken(
   if (!ownerPublicKey) throw new Error("Wallet not connected.");
 
   const mintPublicKey = new PublicKey(token.id);
-  const tokenProgramPk = new PublicKey(token.tokenProgramId); // Use the token's specific program ID
+  const tokenProgramPk = new PublicKey(token.tokenProgramId); 
   const rawAmount = BigInt(Math.round(amount * (10 ** token.decimals)));
   const ownerTokenAccount = token.tokenAddress ? new PublicKey(token.tokenAddress) : getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey, false, tokenProgramPk);
 
@@ -277,23 +298,22 @@ export async function burnSplToken(
       ownerPublicKey,
       rawAmount,
       [],
-      tokenProgramPk // token program id
+      tokenProgramPk 
     )
   ];
 
-  // Only close account if burning the entire balance
   if (rawAmount === token.rawBalance) {
     instructions.push(
       createCloseAccountInstruction(
         ownerTokenAccount,
-        ownerPublicKey, // Destination for remaining SOL
-        ownerPublicKey, // Authority
+        ownerPublicKey, 
+        ownerPublicKey, 
         [],
-        tokenProgramPk // token program id
+        tokenProgramPk 
       )
     );
   }
-
+  console.log("[burnSplToken] Instructions prepared:", JSON.stringify(instructions.map(ix => ({programId: ix.programId.toBase58(), keys: ix.keys.map(k=>k.pubkey.toBase58())})), null, 2));
   return sendTransaction(instructions, connection, wallet);
 }
 
@@ -329,7 +349,8 @@ export async function transferCNft(
 
   if (typeof compression.data_hash !== 'string' || !compression.data_hash.trim()) throw new Error("Compression data_hash missing/invalid.");
   if (typeof compression.creator_hash !== 'string' || !compression.creator_hash.trim()) throw new Error("Compression creator_hash missing/invalid.");
-  if (typeof compression.leaf_id !== 'number') throw new Error("Compression leaf_id missing/invalid.");
+  // Leaf ID can be 0, so checking for typeof 'number' is correct.
+  if (typeof compression.leaf_id !== 'number') throw new Error("Compression leaf_id missing/invalid (not a number).");
   
   const assetProof = await fetchHeliusAssetProof(cnft.id, rpcUrl);
   if (!assetProof || typeof assetProof.root !== 'string' || !assetProof.root.trim() || typeof assetProof.tree_id !== 'string' || !assetProof.tree_id.trim()) {
@@ -370,6 +391,7 @@ export async function transferCNft(
   }
 
   const instructions: TransactionInstruction[] = [transferInstruction];
+  console.log("[transferCNft] Instructions prepared:", JSON.stringify(instructions.map(ix => ({programId: ix.programId.toBase58(), keys: ix.keys.map(k=>k.pubkey.toBase58())})), null, 2));
   return sendTransaction(instructions, connection, wallet);
 }
 
@@ -390,7 +412,8 @@ export async function burnCNft(
 
   if (typeof compression.data_hash !== 'string' || !compression.data_hash.trim()) throw new Error("Compression data_hash missing/invalid for burn.");
   if (typeof compression.creator_hash !== 'string' || !compression.creator_hash.trim()) throw new Error("Compression creator_hash missing/invalid for burn.");
-  if (typeof compression.leaf_id !== 'number') throw new Error("Compression leaf_id missing/invalid for burn.");
+  // Leaf ID can be 0, so checking for typeof 'number' is correct.
+  if (typeof compression.leaf_id !== 'number') throw new Error("Compression leaf_id missing/invalid (not a number) for burn.");
 
   const assetProof = await fetchHeliusAssetProof(cnft.id, rpcUrl);
   if (!assetProof || typeof assetProof.root !== 'string' || !assetProof.root.trim() || typeof assetProof.tree_id !== 'string' || !assetProof.tree_id.trim()) {
@@ -430,5 +453,6 @@ export async function burnCNft(
   }
 
   const instructions: TransactionInstruction[] = [burnInstruction];
+  console.log("[burnCNft] Instructions prepared:", JSON.stringify(instructions.map(ix => ({programId: ix.programId.toBase58(), keys: ix.keys.map(k=>k.pubkey.toBase58())})), null, 2));
   return sendTransaction(instructions, connection, wallet);
 }
