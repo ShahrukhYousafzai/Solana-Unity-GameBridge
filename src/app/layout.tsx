@@ -18,21 +18,21 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className="dark">
       <head>
+        <meta httpEquiv="Content-Security-Policy" content="upgrade-insecure-requests" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
         {/* 
-          The Unity WebGL build will typically include its own loader script (e.g., UnityLoader.js or similar)
-          and data/framework files. You'll place your Unity build in the `public/Build/` directory.
-          The path here should match the main loader script from your Unity build.
-          Example: /Build/YourGameLoader.js 
-          For some Unity versions it might be just `Build/UnityLoader.js`
+          This script tag loads the Unity WebGL loader.
+          Ensure 'UnityLoader.js' (or the actual name of your loader script, e.g., YourGameName.loader.js)
+          is present in your `public/Build/` directory.
+          The `strategy="beforeInteractive"` is important for it to load early.
         */}
         <Script src="/Build/UnityLoader.js" strategy="beforeInteractive" />
       </head>
-      <body className="font-body antialiased bg-gray-900 text-white overflow-hidden">
+      <body className="font-body antialiased bg-background text-foreground overflow-hidden">
         <NetworkProvider>
           <WalletContextProvider>
             {children}
@@ -43,3 +43,5 @@ export default function RootLayout({
     </html>
   );
 }
+
+    
