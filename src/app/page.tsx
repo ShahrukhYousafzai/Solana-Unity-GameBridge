@@ -38,7 +38,6 @@ interface UnityInstance {
   Quit?: () => Promise<void>;
   Module?: {
     canvas?: HTMLCanvasElement;
-    // Add other Module properties if needed, e.g., setCanvasSize
   };
 }
 
@@ -104,6 +103,8 @@ export default function HomePage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isUnityLoading, setIsUnityLoading] = useState(true);
   const [unityLoadingProgress, setUnityLoadingProgress] = useState(0);
+  const [isUnityInitialized, setIsUnityInitialized] = useState(false);
+
 
   useEffect(() => { nftsRef.current = nfts; }, [nfts]);
   useEffect(() => { cnftsRef.current = cnfts; }, [cnfts]);
@@ -116,18 +117,15 @@ export default function HomePage() {
 
   const sendToUnity = useCallback((gameObjectName: string, methodName: string, message: any) => {
     const currentInstance = unityInstanceRef.current;
+    if (!currentInstance?.SendMessage) {
+      console.warn(`[UnityBridge] sendToUnity: Unity instance or SendMessage not available. Cannot send to ${gameObjectName}.${methodName}. Instance:`, currentInstance, "Message:", message);
+      return;
+    }
     const replacer = (key: string, value: any) => (typeof value === 'bigint' ? value.toString() : value);
     const msgStr = typeof message === 'object' ? JSON.stringify(message, replacer) : String(message);
 
-    if (currentInstance?.SendMessage) {
-      console.log(`[UnityBridge] Sending via unityInstanceRef: ${gameObjectName}.${methodName}`, message);
-      currentInstance.SendMessage(gameObjectName, methodName, msgStr);
-    } else if (window.UnityGame?.SendMessage) {
-      console.log(`[UnityBridge] Sending via window.UnityGame (fallback): ${gameObjectName}.${methodName}`, message);
-      window.UnityGame.SendMessage(gameObjectName, methodName, msgStr);
-    } else {
-      console.warn(`[UnityBridge] Unity instance (ref or global) not found. Message for ${gameObjectName}.${methodName} not sent. Current instance ref is:`, currentInstanceRef.current, "Message:", message);
-    }
+    console.log(`[UnityBridge] Sending: ${gameObjectName}.${methodName}`, message);
+    currentInstance.SendMessage(gameObjectName, methodName, msgStr);
   }, []);
 
   const fetchSolBalanceInternal = useCallback(async (
@@ -469,203 +467,202 @@ export default function HomePage() {
   ]);
 
 
+  // EFFECT 1: Manages Unity instance lifecycle (create on mount, quit on unmount)
   useEffect(() => {
+    console.log("[UnityBridge] Lifecycle Effect 1: Mount/Unmount for Unity Instance annd Core Bridge Setup.");
     let criticalErrorTimerId: NodeJS.Timeout | null = null;
-    let localUnityInstance: UnityInstance | null = null;
-
-    console.log("[UnityBridge] Main lifecycle effect started for Unity initialization.");
+    let localUnityInstance: UnityInstance | null = null; // Instance specific to this effect's scope
 
     const aggressiveCleanup = () => {
-      console.log("[UnityBridge] Performing aggressive cleanup of potential lingering instances...");
+      console.log("[UnityBridge] Aggressive cleanup: Checking for lingering instances...");
       if (unityInstanceRef.current) {
-          console.warn("[UnityBridge] Lingering unityInstanceRef.current found. Attempting to quit.");
-          try { unityInstanceRef.current.Quit?.(); } catch(e) { console.warn("Error quitting ref instance during aggressive cleanup", e); }
+          console.warn("[UnityBridge] Lingering unityInstanceRef.current found. Quitting.");
+          unityInstanceRef.current.Quit?.().catch(e => console.warn("Error quitting ref instance (aggressive)", e));
           unityInstanceRef.current = null;
       }
       if (window.unityInstance) {
-        console.warn("[UnityBridge] Lingering window.unityInstance found. Attempting to quit.");
-        try { window.unityInstance.Quit?.(); } catch (e) { console.warn("[UnityBridge] Error quitting lingering window.unityInstance:", e); }
+        console.warn("[UnityBridge] Lingering window.unityInstance found. Quitting.");
+        window.unityInstance.Quit?.().catch(e => console.warn("Error quitting window.unityInstance (aggressive)",e));
         window.unityInstance = undefined;
-      }
-      if ((window as any).unityBridge) {
-        console.warn("[UnityBridge] Lingering window.unityBridge found. Deleting.");
-        delete (window as any).unityBridge;
-      }
-      if (window.callConnectWalletFromUnity) {
-        console.warn("[UnityBridge] Lingering global callConnectWalletFromUnity found. Deleting.");
-        delete window.callConnectWalletFromUnity;
       }
     };
 
     const createUnity = async () => {
-      aggressiveCleanup(); // Call cleanup at the start of creation attempt
+      aggressiveCleanup();
 
       if (isCreatingUnityRef.current || !canvasRef.current) {
-        console.log(`[UnityBridge] CreateUnity skipped: already creating (${isCreatingUnityRef.current}) or canvas not ready (${!canvasRef.current})`);
+        console.log(`[UnityBridge] CreateUnity skipped: already creating (${isCreatingUnityRef.current}), canvas not ready (${!canvasRef.current}), or no createUnityInstance (${typeof window.createUnityInstance !== 'function'})`);
         return;
       }
+      if (typeof window.createUnityInstance !== 'function') {
+          console.error(`[UnityBridge] CRITICAL: window.createUnityInstance is NOT FOUND. Unity loader script ('${UNITY_GAME_BUILD_BASE_NAME}.loader.js') likely failed.`);
+          setIsUnityLoading(false);
+          toast({
+              title: "Game Loader Script Missing!",
+              description: `Essential Unity loader ('${UNITY_GAME_BUILD_BASE_NAME}.loader.js') not found. Check console for 404s.`,
+              variant: "destructive", duration: 60000
+          });
+          return;
+      }
+
       isCreatingUnityRef.current = true;
       setIsUnityLoading(true);
+      setIsUnityInitialized(false);
       setUnityLoadingProgress(0);
-
-      console.log(`[UnityBridge] Attempting to create Unity instance. Configured base name: "${UNITY_GAME_BUILD_BASE_NAME}"`);
-      if (UNITY_GAME_BUILD_BASE_NAME === "MyGame" || !UNITY_GAME_BUILD_BASE_NAME) {
-        console.warn(`[UnityBridge] UNITY_GAME_BUILD_BASE_NAME is default or empty ("${UNITY_GAME_BUILD_BASE_NAME}"). Ensure NEXT_PUBLIC_UNITY_GAME_BUILD_BASE_NAME env var is set correctly.`);
+      console.log(`[UnityBridge] createUnity: Starting. Config base name: "${UNITY_GAME_BUILD_BASE_NAME}"`);
+       if (UNITY_GAME_BUILD_BASE_NAME === "MyGame" || !UNITY_GAME_BUILD_BASE_NAME) {
+        console.warn(`[UnityBridge] UNITY_GAME_BUILD_BASE_NAME is default or empty ("${UNITY_GAME_BUILD_BASE_NAME}"). Ensure NEXT_PUBLIC_UNITY_GAME_BUILD_BASE_NAME env var is set correctly and 'Name Files As Hashes' is OFF in Unity Build Settings.`);
       }
+
       const unityConfig = {
         dataUrl: `/Build/${UNITY_GAME_BUILD_BASE_NAME}.data`,
         frameworkUrl: `/Build/${UNITY_GAME_BUILD_BASE_NAME}.framework.js`,
         codeUrl: `/Build/${UNITY_GAME_BUILD_BASE_NAME}.wasm`,
       };
-      console.log("[UnityBridge] Using Unity config:", JSON.stringify(unityConfig, null, 2));
-      console.log("[UnityBridge] Canvas element for Unity:", canvasRef.current);
+      console.log("[UnityBridge] createUnity: Using Unity config:", JSON.stringify(unityConfig, null, 2));
+      console.log("[UnityBridge] createUnity: Canvas element:", canvasRef.current);
 
       try {
-        console.log("[UnityBridge] Calling window.createUnityInstance...");
+        console.log("[UnityBridge] createUnity: Calling window.createUnityInstance...");
         const instance = await window.createUnityInstance(
           canvasRef.current,
           unityConfig,
           (progress) => { setUnityLoadingProgress(progress * 100); }
         );
-        console.log("[UnityBridge] Unity instance CREATED successfully via window.createUnityInstance.");
-        localUnityInstance = instance;
-        unityInstanceRef.current = instance;
-        window.unityInstance = instance; // Also assign to global for potential direct access by jslib
-
-        console.log("[UnityBridge] About to define window.unityBridge.");
-        const bridge = buildUnityBridge(); // buildUnityBridge uses useCallback and its own dependencies
-        (window as any).unityBridge = bridge;
-        console.log("[UnityBridge] window.unityBridge DEFINED. Bridge object:", bridge);
-
-        (window as any).callConnectWalletFromUnity = () => {
-          console.log("[Global Scope] callConnectWalletFromUnity() called by Unity.");
-          if (window.unityBridge && typeof window.unityBridge.connectWallet === 'function') {
-            console.log("[Global Scope] Forwarding call to window.unityBridge.connectWallet().");
-            window.unityBridge.connectWallet();
-          } else {
-            console.error("[Global Scope] window.unityBridge or window.unityBridge.connectWallet not found or not a function when called by Unity.");
-            if (unityInstanceRef.current?.SendMessage) {
-                try {
-                    const errorPayload = { error: "UnityBridge connectWallet not ready on web.", bridgeExists: !!window.unityBridge, connectWalletExists: typeof window.unityBridge?.connectWallet === 'function' };
-                    unityInstanceRef.current.SendMessage("GameBridgeManager", "OnWalletConnectionError", JSON.stringify(errorPayload));
-                } catch (e) { console.error("[Global Scope] Error sending message back to Unity about bridge readiness:", e); }
-            }
-          }
-        };
-        console.log("[UnityBridge] Global function 'callConnectWalletFromUnity' DEFINED on window.");
-        sendToUnity("GameBridgeManager", "OnUnityReady", {}); // Inform Unity the bridge is ready
+        console.log("[UnityBridge] createUnity: Unity instance CREATED successfully.");
+        localUnityInstance = instance; // Store in this effect's scope for cleanup
+        unityInstanceRef.current = instance; // Update global ref
+        window.unityInstance = instance;
+        setIsUnityInitialized(true); // Signal that Unity is ready for bridge setup
 
       } catch (error: any) {
-        console.error("[UnityBridge] CRITICAL ERROR creating Unity instance:", error.message, error.stack, error);
+        console.error("[UnityBridge] createUnity: CRITICAL ERROR creating Unity instance:", error.message, error.stack, error);
         sendToUnity("GameBridgeManager", "OnUnityLoadError", { error: error.message || "Unknown error during Unity instance creation." });
         toast({
           title: "Unity Game Load Error!",
-          description: `Failed to load game: ${error.message || 'Unknown error'}. Please check the browser console (F12) for more details, especially for 404 errors related to game files. Ensure 'Name Files As Hashes' is OFF in Unity's WebGL build settings and UNITY_GAME_BUILD_BASE_NAME matches.`,
+          description: `Failed to load game: ${error.message || 'Unknown error'}. Check console for details (404s, etc). Ensure 'Name Files As Hashes' is OFF in Unity.`,
           variant: "destructive",
           duration: 30000
         });
       } finally {
         setIsUnityLoading(false);
         isCreatingUnityRef.current = false;
-        console.log("[UnityBridge] CreateUnity finally block. isUnityLoading:", false, "isCreatingUnityRef:", false);
+        console.log("[UnityBridge] createUnity: Finally block. isUnityLoading:", false, "isCreatingUnityRef:", false);
       }
     };
 
     if (!canvasRef.current) {
-      console.warn("[UnityBridge] Canvas ref not available yet for Unity init in main effect. Will wait for canvas.");
-      return; // useEffect will re-run when canvasRef.current is set
-    }
-
-    if (typeof window.createUnityInstance !== 'function') {
-      console.error(`[UnityBridge] CRITICAL: window.createUnityInstance function is NOT FOUND. This means the Unity loader script ('${UNITY_GAME_BUILD_BASE_NAME}.loader.js') likely failed to load or is incorrect.`);
-      criticalErrorTimerId = setTimeout(() => { // Give it a few seconds to potentially load
+      console.warn("[UnityBridge] Lifecycle Effect 1: Canvas ref not available yet for Unity init. Will re-evaluate when canvas is ready.");
+    } else if (typeof window.createUnityInstance !== 'function') {
+      console.error(`[UnityBridge] Lifecycle Effect 1: window.createUnityInstance function is NOT FOUND. Loader script ('${UNITY_GAME_BUILD_BASE_NAME}.loader.js') likely failed.`);
+      criticalErrorTimerId = setTimeout(() => {
         if (typeof window.createUnityInstance !== 'function') {
-            setIsUnityLoading(false); // Stop loading UI
-            sendToUnity("GameBridgeManager", "OnUnityLoadError", { error: "Unity loader script (createUnityInstance) not found on window after delay."});
+            setIsUnityLoading(false);
             toast({
                 title: "Game Loader Script Missing!",
-                description: `Essential Unity loader ('${UNITY_GAME_BUILD_BASE_NAME}.loader.js') not found on 'window.createUnityInstance'. \n1. Verify UNITY_GAME_BUILD_BASE_NAME in .env (current: "${UNITY_GAME_BUILD_BASE_NAME}"). \n2. Ensure loader is in /public/Build/ & correctly named '${UNITY_GAME_BUILD_BASE_NAME}.loader.js'. \n3. "Name Files As Hashes" MUST BE OFF in Unity Build Settings. \n4. Check Network tab for 404s & Console for prior errors.`,
-                variant: "destructive",
-                duration: 60000 // Longer duration for critical error
+                description: `Critical: Unity loader ('${UNITY_GAME_BUILD_BASE_NAME}.loader.js') not found. Check env var UNITY_GAME_BUILD_BASE_NAME, /public/Build/ path, and ensure 'Name Files As Hashes' is OFF in Unity.`,
+                variant: "destructive", duration: 60000
             });
         }
-      }, 5000); // 5 seconds delay
-      return () => { if (criticalErrorTimerId) clearTimeout(criticalErrorTimerId); };
+      }, 5000);
+    } else {
+       console.log("[UnityBridge] Lifecycle Effect 1: Conditions met, calling createUnity().");
+       createUnity();
     }
 
-    createUnity(); // Call the async function to create Unity
-
     return () => {
-      console.log("[UnityBridge] Main lifecycle effect UNMOUNT cleanup running.");
+      console.log("[UnityBridge] Lifecycle Effect 1: UNMOUNT cleanup running for Unity Instance.");
       if (criticalErrorTimerId) clearTimeout(criticalErrorTimerId);
-
-      const instanceToQuit = localUnityInstance || unityInstanceRef.current; // Prioritize instance from this effect's scope
+      
+      const instanceToQuit = localUnityInstance || unityInstanceRef.current;
       if (instanceToQuit) {
-        console.log("[UnityBridge] Attempting to quit Unity instance (from main effect cleanup).");
+        console.log("[UnityBridge] UNMOUNT: Attempting to quit Unity instance.");
+        setIsUnityInitialized(false);
         try {
-          const currentCanvas = canvasRef.current; 
-          if (currentCanvas && instanceToQuit.Module?.canvas === currentCanvas) { // Check if canvas still belongs to this instance
+          const currentCanvas = canvasRef.current;
+          if (currentCanvas && instanceToQuit.Module?.canvas === currentCanvas) {
              const gl = currentCanvas.getContext("webgl") || currentCanvas.getContext("experimental-webgl");
-             if (gl && gl.getExtension("WEBGL_lose_context")) {
-                console.log("[UnityBridge] Actively losing WebGL context for current instance on unmount.");
+             if (gl?.getExtension("WEBGL_lose_context")) {
                 gl.getExtension("WEBGL_lose_context")!.loseContext();
-             } else {
-                console.warn("[UnityBridge] WEBGL_lose_context extension not available or canvas mismatch on unmount.");
+                console.log("[UnityBridge] UNMOUNT: Actively lost WebGL context.");
              }
           }
-          // Non-blocking Quit attempt
           instanceToQuit.Quit?.()
-            .then(() => console.log("[UnityBridge] Unity instance (from main effect cleanup) successfully quit."))
-            .catch(e => console.warn("[UnityBridge] Error during Unity instance Quit() promise (from main effect cleanup):", e));
+            .then(() => console.log("[UnityBridge] UNMOUNT: Unity instance successfully quit."))
+            .catch(e => console.warn("[UnityBridge] UNMOUNT: Error during Unity instance Quit() promise:", e));
         } catch (e) {
-          console.warn("[UnityBridge] Synchronous error during Unity instance cleanup (from main effect cleanup):", e);
+          console.warn("[UnityBridge] UNMOUNT: Synchronous error during Unity instance cleanup:", e);
         }
       } else {
-        console.log("[UnityBridge] No Unity instance found to quit during main effect cleanup.");
+        console.log("[UnityBridge] UNMOUNT: No Unity instance found to quit.");
       }
       
       unityInstanceRef.current = null;
-      window.unityInstance = undefined;
-
-      if ((window as any).unityBridge) {
-        console.log("[UnityBridge] Deleting window.unityBridge from window (main effect cleanup).");
-        delete (window as any).unityBridge;
-      }
-      if (window.callConnectWalletFromUnity) {
-        console.log("[UnityBridge] Deleting global function 'callConnectWalletFromUnity' from window (main effect cleanup).");
-        delete window.callConnectWalletFromUnity;
-      }
+      window.unityInstance = undefined; // Clear global instance
       isCreatingUnityRef.current = false;
       setIsUnityLoading(true); // Reset loading state for potential remount
       setUnityLoadingProgress(0);
+      console.log("[UnityBridge] Lifecycle Effect 1: UNMOUNT cleanup finished.");
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buildUnityBridge]); // buildUnityBridge is stable due to its own useCallback
-  // Note: Removed canvasRef.current from dependencies as it's a ref and doesn't trigger re-runs.
-  // The effect already checks for canvasRef.current internally.
+  }, []); // Empty dependency array: Runs once on mount, cleanup on unmount.
+
+  // EFFECT 2: Manages window.unityBridge and global helper function
+  useEffect(() => {
+    console.log(`[UnityBridge] Lifecycle Effect 2: Bridge Object Management. isUnityInitialized: ${isUnityInitialized}`);
+    if (!isUnityInitialized || !unityInstanceRef.current) {
+      console.log("[UnityBridge] Lifecycle Effect 2: Skipping bridge setup, Unity not initialized or instance ref missing.");
+      return;
+    }
+
+    console.log("[UnityBridge] Lifecycle Effect 2: Defining/Updating window.unityBridge and callConnectWalletFromUnity.");
+    const bridge = buildUnityBridge();
+    (window as any).unityBridge = bridge;
+
+    if (!(window as any).callConnectWalletFromUnity) {
+        (window as any).callConnectWalletFromUnity = () => {
+        console.log("[Global Scope] callConnectWalletFromUnity() called by Unity.");
+        if (window.unityBridge && typeof window.unityBridge.connectWallet === 'function') {
+            console.log("[Global Scope] Forwarding call to window.unityBridge.connectWallet().");
+            window.unityBridge.connectWallet();
+        } else {
+            console.error("[Global Scope] window.unityBridge.connectWallet not found/not a function.");
+            sendToUnity("GameBridgeManager", "OnWalletConnectionError", { error: "Bridge connectWallet not ready.", bridgeExists: !!window.unityBridge });
+        }
+        };
+        console.log("[UnityBridge] Lifecycle Effect 2: Global function 'callConnectWalletFromUnity' DEFINED on window.");
+    } else {
+        console.log("[UnityBridge] Lifecycle Effect 2: Global function 'callConnectWalletFromUnity' ALREADY EXISTS on window.");
+    }
+    
+    sendToUnity("GameBridgeManager", "OnUnityReady", {}); // Inform Unity the bridge is ready/updated
+
+    return () => {
+      // This cleanup is optional as assignments to window properties are overwritten.
+      // However, for strictness or if there were event listeners set up by the bridge *itself* on window:
+      console.log("[UnityBridge] Lifecycle Effect 2: UNMOUNT cleanup for Bridge Object (optional).");
+      // delete (window as any).unityBridge; // Or set to null
+      // delete (window as any).callConnectWalletFromUnity; // Or set to null
+    };
+  }, [isUnityInitialized, buildUnityBridge, sendToUnity]); // Re-run if Unity becomes initialized, or if bridge definition changes
+
 
   // WebGL Context Loss/Restore Handlers
   useEffect(() => {
     const canvas = canvasRef.current;
     const handleWebGLContextLost = (event: Event) => {
-      event.preventDefault(); // Important to prevent default browser handling
-      console.error("[WebGL] Context Lost! Informing Unity via GameBridgeManager.OnWebGLContextLost");
+      event.preventDefault(); 
+      console.error("[WebGL] Context Lost! Informing Unity via GameBridgeManager.OnWebGLContextLost. Game may need reload.");
       sendToUnity("GameBridgeManager", "OnWebGLContextLost", {});
-      // Consider additional UI changes here, like showing a "Reload Game" button.
     };
     const handleWebGLContextRestored = () => {
-      console.log("[WebGL] Context Restored. Attempting to inform Unity via GameBridgeManager.OnWebGLContextRestored");
+      console.log("[WebGL] Context Restored. Informing Unity. Manual game re-initialization might be needed if auto-recovery fails.");
       sendToUnity("GameBridgeManager", "OnWebGLContextRestored", {});
-      // Unity might need to re-initialize shaders, textures, etc.
-      // This often requires a game reload or specific handling within Unity.
     };
 
     if (canvas) {
       canvas.addEventListener('webglcontextlost', handleWebGLContextLost, false);
       canvas.addEventListener('webglcontextrestored', handleWebGLContextRestored, false);
       console.log("[WebGL] WebGL context event listeners attached to canvas.");
-    } else {
-      console.warn("[WebGL] Canvas ref not available to attach WebGL context listeners.");
     }
     return () => {
       if (canvas) {
@@ -674,7 +671,7 @@ export default function HomePage() {
         console.log("[WebGL] WebGL context event listeners removed from canvas.");
       }
     };
-  }, [sendToUnity]); // sendToUnity is stable
+  }, [sendToUnity]);
 
 
   return (
@@ -717,8 +714,8 @@ export default function HomePage() {
             ref={canvasRef}
             id="unity-canvas"
             className={`w-full h-full block ${isUnityLoading ? 'opacity-0' : 'opacity-100'} transition-opacity duration-500`}
-            style={{ background: 'transparent' }} // Ensure Unity game background is also transparent or matches if needed
-            tabIndex={-1} // Ensure canvas can't be tabbed to unless explicitly managed
+            style={{ background: 'transparent' }}
+            tabIndex={-1}
         ></canvas>
       </main>
     </div>
