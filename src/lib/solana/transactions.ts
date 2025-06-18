@@ -9,6 +9,7 @@ import {
   TransactionInstruction,
   type SendTransactionError, 
   type Commitment,
+  Keypair, // Added Keypair
 } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
@@ -21,6 +22,7 @@ import {
 } from "@solana/spl-token";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import type { Nft, CNft, SplToken } from "@/types/solana";
+import type { SupportedSolanaNetwork } from "@/config"; // Added
 import {
   PROGRAM_ID as BUBBLEGUM_PROGRAM_ID,
   createBurnInstruction as createBubblegumBurnInstruction,
@@ -30,7 +32,7 @@ import {
   SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
   SPL_NOOP_PROGRAM_ID,
 } from '@solana/spl-account-compression';
-import { fetchHeliusAssetProof } from "@/lib/asset-loader"; 
+import { fetchHeliusAssetProof } from "@/lib/asset-loader";
 import BN from 'bn.js';
 import * as bs58 from "bs58";
 import { CUSTODIAL_WALLET_ADDRESS } from "@/config";
@@ -39,7 +41,8 @@ import { CUSTODIAL_WALLET_ADDRESS } from "@/config";
 async function sendTransaction(
   instructions: TransactionInstruction[],
   connection: Connection,
-  wallet: WalletContextState
+  wallet: WalletContextState,
+  signers?: Keypair[] // Optional signers for server-side transactions
 ): Promise<string> {
   const payerPublicKey = wallet.publicKey;
   const signTransactionFn = wallet.signTransaction;
@@ -81,6 +84,12 @@ async function sendTransaction(
     }).compileToV0Message();
 
     const versionedTransaction = new VersionedTransaction(messageV0);
+    
+    // Add extra signers if provided (for server-side signing with custodial wallet)
+    if (signers && signers.length > 0) {
+      versionedTransaction.sign(signers);
+    }
+
     const signedTransaction = await signTransactionFn(versionedTransaction);
     
     console.log("[sendTransaction] Sending transaction with skipPreflight: false, maxRetries: 0");
@@ -161,7 +170,7 @@ export async function transferNft(
   }
 
   const mintPublicKey = new PublicKey(nft.id);
-  const tokenProgramPk = TOKEN_PROGRAM_ID; // Standard NFTs use TOKEN_PROGRAM_ID
+  const tokenProgramPk = TOKEN_PROGRAM_ID; 
 
   const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey, false, tokenProgramPk);
   const recipientAta = getAssociatedTokenAddressSync(mintPublicKey, recipientAddress, false, tokenProgramPk);
@@ -186,7 +195,7 @@ export async function transferNft(
       sourceAta,
       recipientAta,
       ownerPublicKey,
-      1, // Amount for NFTs is 1
+      1, 
       [],
       tokenProgramPk 
     )
@@ -253,7 +262,7 @@ export async function burnNft(
   if (!ownerPublicKey) throw new Error("Wallet not connected.");
 
   const mintPublicKey = new PublicKey(nft.id);
-  const tokenProgramPk = TOKEN_PROGRAM_ID; // Standard NFTs use TOKEN_PROGRAM_ID
+  const tokenProgramPk = TOKEN_PROGRAM_ID; 
   const ownerTokenAccount = nft.tokenAddress ? new PublicKey(nft.tokenAddress) : getAssociatedTokenAddressSync(mintPublicKey, ownerPublicKey, false, tokenProgramPk);
 
 
@@ -262,7 +271,7 @@ export async function burnNft(
       ownerTokenAccount,
       mintPublicKey,
       ownerPublicKey,
-      1, // Amount for NFTs is 1
+      1, 
       [],
       tokenProgramPk 
     ),
@@ -510,39 +519,47 @@ export async function depositSplToken(
   return sendTransaction(instructions, connection, wallet);
 }
 
-// Placeholder for withdrawal - actual withdrawal from custodial wallet requires backend signing
+
+export interface WithdrawalResponse {
+  success: boolean;
+  message: string;
+  signature?: string;
+}
+
 export async function initiateWithdrawalRequest(
   token: SplToken,
   userWalletAddress: string,
-  grossAmount: number,
-  netAmountToUser: number
-): Promise<{success: boolean, message: string}> {
+  netAmountToUser: number, // Amount user receives after tax
+  currentNetwork: SupportedSolanaNetwork
+): Promise<WithdrawalResponse> {
   console.log(`[initiateWithdrawalRequest] User ${userWalletAddress} requested withdrawal of ${token.name} (${token.symbol}).`);
-  console.log(`  Gross Amount: ${grossAmount} ${token.symbol}`);
-  console.log(`  Tax (5%): ${grossAmount - netAmountToUser} ${token.symbol}`);
-  console.log(`  Net Amount to User: ${netAmountToUser} ${token.symbol}`);
+  console.log(`  Net Amount to User (after tax): ${netAmountToUser} ${token.symbol}`);
   console.log(`  Token Mint: ${token.id}`);
-  console.log("  IMPORTANT: This is a frontend placeholder. A backend service is required to securely sign and dispatch this transaction from the custodial wallet.");
-  
-  // In a real application, you would make an API call to your backend here.
-  // Example:
-  // const response = await fetch('/api/request-withdrawal', {
-  //   method: 'POST',
-  //   headers: { 'Content-Type': 'application/json' },
-  //   body: JSON.stringify({
-  //     tokenMint: token.id,
-  //     userWalletAddress,
-  //     netAmount: netAmountToUser, // Send net amount or let backend calculate
-  //     tokenDecimals: token.decimals,
-  //     tokenProgramId: token.tokenProgramId
-  //   }),
-  // });
-  // if (!response.ok) {
-  //   const errorData = await response.json();
-  //   return { success: false, message: errorData.message || "Backend withdrawal request failed." };
-  // }
-  // const result = await response.json();
-  // return { success: true, message: result.message || "Withdrawal request submitted." };
+  console.log(`  Network: ${currentNetwork}`);
+  console.log("  IMPORTANT: This will call a Next.js API route to securely process the withdrawal from the custodial wallet.");
 
-  return { success: true, message: "Withdrawal request has been logged. The team will process it shortly." };
+  try {
+    const response = await fetch('/api/process-withdrawal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tokenMint: token.id,
+        userWalletAddress,
+        netAmount: netAmountToUser,
+        tokenDecimals: token.decimals,
+        tokenProgramId: token.tokenProgramId,
+        network: currentNetwork,
+      }),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      return { success: false, message: result.message || "Backend withdrawal request failed." };
+    }
+    return { success: true, message: result.message || "Withdrawal processed.", signature: result.signature };
+  } catch (error: any) {
+    console.error("Error calling /api/process-withdrawal:", error);
+    return { success: false, message: `Frontend error initiating withdrawal: ${error.message}` };
+  }
 }

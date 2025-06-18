@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { getTransactionExplorerUrl, getAddressExplorerUrl } from "@/utils/explorer";
 import { transferNft, transferSplToken, burnNft, burnSplToken, transferCNft, burnCNft, depositSplToken, initiateWithdrawalRequest } from "@/lib/solana/transactions";
+import type { WithdrawalResponse } from "@/lib/solana/transactions";
 import { RefreshCw, Package, PackageSearch, CoinsIcon } from "lucide-react";
 import { useNetwork } from "@/contexts/NetworkContext";
 import { NetworkSwitcher } from "@/components/NetworkSwitcher";
@@ -210,7 +211,7 @@ export default function HomePage() {
         action: <a href={getTransactionExplorerUrl(signature, currentNetwork)} target="_blank" rel="noopener noreferrer" className="text-primary underline">View on Explorer</a>,
       });
       setIsDepositModalOpen(false);
-      loadAssets(); // Refresh assets after deposit
+      loadAssets(); 
     } catch (error: any) {
       console.error("Deposit failed:", error);
       toast({ title: "Deposit Failed", description: error.message, variant: "destructive" });
@@ -219,7 +220,7 @@ export default function HomePage() {
     }
   }, [selectedAsset, publicKey, connection, wallet, toast, loadAssets, currentNetwork, isSubmittingTransaction]);
 
-  const handleRequestWithdrawal = useCallback(async (grossAmount: number, netAmount: number) => {
+  const handleRequestWithdrawal = useCallback(async (_grossAmount: number, netAmount: number) => {
     if (isSubmittingTransaction) {
       toast({ title: "In Progress", description: "Another transaction is already being processed.", variant: "default" });
       return;
@@ -228,33 +229,41 @@ export default function HomePage() {
       toast({ title: "Error", description: "Wallet not connected or no token selected for withdrawal.", variant: "destructive" });
       return;
     }
-    if (grossAmount <= 0) {
-      toast({ title: "Error", description: "Invalid withdrawal amount.", variant: "destructive" });
+    if (netAmount <= 0) { // Check netAmount as this is what's actually transferred
+      toast({ title: "Error", description: "Invalid withdrawal amount (net amount must be positive).", variant: "destructive" });
       return;
     }
 
     setIsSubmittingTransaction(true);
     try {
-      // This is a placeholder. In a real app, this would call a backend API.
-      const result = await initiateWithdrawalRequest(selectedAsset as SplToken, publicKey.toBase58(), grossAmount, netAmount);
+      const result: WithdrawalResponse = await initiateWithdrawalRequest(
+        selectedAsset as SplToken,
+        publicKey.toBase58(),
+        netAmount,
+        currentNetwork
+      );
+
       if (result.success) {
         toast({
-          title: "Withdrawal Requested",
-          description: result.message,
+          title: "Withdrawal Processed",
+          description: result.signature ? `Transaction Signature: ${result.signature}` : result.message,
+          action: result.signature ? <a href={getTransactionExplorerUrl(result.signature, currentNetwork)} target="_blank" rel="noopener noreferrer" className="text-primary underline">View on Explorer</a> : undefined,
         });
         setIsWithdrawModalOpen(false);
-        // Note: We don't call loadAssets() here as the actual transfer is backend-driven.
-        // The user's "in-game" balance would be updated by the backend.
+        // Optionally, refresh assets if the API route confirms the transaction directly
+        // and doesn't rely on a separate backend processor for the transfer.
+        // For now, we assume it might take a moment for the balance to reflect or it's handled off-chain.
+        // loadAssets(); 
       } else {
-        toast({ title: "Withdrawal Request Failed", description: result.message, variant: "destructive" });
+        toast({ title: "Withdrawal Failed", description: result.message, variant: "destructive" });
       }
     } catch (error: any) {
       console.error("Withdrawal request failed:", error);
-      toast({ title: "Withdrawal Request Failed", description: error.message, variant: "destructive" });
+      toast({ title: "Withdrawal Request Error", description: error.message, variant: "destructive" });
     } finally {
       setIsSubmittingTransaction(false);
     }
-  }, [selectedAsset, publicKey, toast, isSubmittingTransaction]);
+  }, [selectedAsset, publicKey, toast, currentNetwork, isSubmittingTransaction]);
   
   useEffect(() => {
     if (typeof window !== 'undefined') {
