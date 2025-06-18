@@ -45,7 +45,7 @@ declare global {
     ) => Promise<UnityInstance>;
     unityInstance?: UnityInstance;
     unityBridge?: any;
-    UnityGame?: { 
+    UnityGame?: {
       SendMessage: (gameObjectName: string, methodName: string, message: string | number | object) => void;
     };
   }
@@ -75,7 +75,7 @@ export default function HomePage() {
   const sendToUnity = useCallback((gameObjectName: string, methodName: string, message: any) => {
     const replacer = (key: string, value: any) => {
       if (typeof value === 'bigint') {
-        return value.toString(); 
+        return value.toString();
       }
       return value;
     };
@@ -114,9 +114,9 @@ export default function HomePage() {
           setUnityLoadingProgress(progress * 100);
         }).then((instance) => {
           setUnityInstance(instance);
-          window.unityInstance = instance; 
+          window.unityInstance = instance;
           setIsUnityLoading(false);
-          sendToUnity("GameManager", "OnUnityReady", {}); 
+          sendToUnity("GameManager", "OnUnityReady", {});
         }).catch((error) => {
           console.error("Error creating Unity instance:", error);
           setIsUnityLoading(false);
@@ -126,16 +126,16 @@ export default function HomePage() {
       } else {
         console.warn("window.createUnityInstance is not available. Check if UnityLoader.js (or your game's loader script, e.g., YourGameName.loader.js) is correctly loaded via <Script> in layout.tsx, and that your Unity build files are in /public/Build/ and named according to UNITY_GAME_BUILD_BASE_NAME.");
         const timer = setTimeout(() => {
-          if (isUnityLoading) { 
-               setIsUnityLoading(false); 
+          if (isUnityLoading) {
+               setIsUnityLoading(false);
                toast({ title: "Game Loader Error", description: "Could not initialize Unity game loader. Check browser console and ensure Unity build files (matching UNITY_GAME_BUILD_BASE_NAME) and the loader script (e.g., MyGame.loader.js) are present and correctly pathed.", variant: "destructive", duration: 15000 });
           }
-        }, 5000); 
-        return () => clearTimeout(timer); 
+        }, 5000);
+        return () => clearTimeout(timer);
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); 
+  }, []);
 
 
   const fetchSolBalance = useCallback(async () => {
@@ -581,7 +581,7 @@ export default function HomePage() {
     loadUserAssets, fetchSolBalance,
     setCurrentNetwork,
     toast, sendToUnity,
-    isSubmittingTransaction, isLoadingAssets, unityInstance
+    isSubmittingTransaction, /*isLoadingAssets,*/ unityInstance // Removed isLoadingAssets
   ]);
 
 
@@ -594,13 +594,13 @@ export default function HomePage() {
         </div>
       </header>
 
-      <main className="flex-1 w-full h-[calc(100vh-4rem)] p-0 m-0 relative">
+      <main className="flex-1 w-full h-[calc(100vh-4rem)] p-0 m-0 relative overflow-hidden">
         {isUnityLoading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-background z-50">
              <div className="w-60 h-60 mb-4">
-                <img 
-                     src={`/Build/${UNITY_GAME_BUILD_BASE_NAME}_Logo.png`} 
-                     alt="Game Logo" 
+                <img
+                     src={`/Build/${UNITY_GAME_BUILD_BASE_NAME}_Logo.png`}
+                     alt="Game Logo"
                      className="w-full h-full object-contain"
                      data-ai-hint="phoenix fire"
                      onError={(e) => { (e.target as HTMLImageElement).src = 'https://placehold.co/240x240.png'; (e.target as HTMLImageElement).alt = 'Game Logo Placeholder'; }}
