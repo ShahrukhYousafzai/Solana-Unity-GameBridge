@@ -8,20 +8,21 @@ import * as bs58 from 'bs58';
 // IMPORTANT FOR PRODUCTION:
 // The CUSTODIAL_WALLET_PRIVATE_KEY must be set as a secure environment variable
 // in your hosting environment (e.g., Firebase App Hosting secrets, or Cloud Function environment variables if deploying Next.js that way).
-// It should NOT be hardcoded here or committed to your repository.
+// It should NOT be hardcoded here or committed to your repository if this were actual production code.
+// For local development, it's typically stored in .env.local (which should be gitignored).
 // Firebase (or your chosen hosting provider) makes this variable securely available
 // to this server-side code at runtime, without exposing it to the client.
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { 
-      tokenMint, 
-      userWalletAddress, 
+    const {
+      tokenMint,
+      userWalletAddress,
       netAmount, // Amount user actually receives
-      tokenDecimals, 
-      tokenProgramId, 
-      network 
+      tokenDecimals,
+      tokenProgramId,
+      network
     }: {
       tokenMint: string;
       userWalletAddress: string;
@@ -35,21 +36,33 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, message: "Missing or invalid parameters." }, { status: 400 });
     }
 
-    const custodialWalletPrivateKeyBs58 = process.env.CUSTODIAL_WALLET_PRIVATE_KEY;
-    if (!custodialWalletPrivateKeyBs58) {
+    const custodialWalletPrivateKeyString = process.env.CUSTODIAL_WALLET_PRIVATE_KEY;
+    if (!custodialWalletPrivateKeyString) {
       console.error("CUSTODIAL_WALLET_PRIVATE_KEY environment variable is not set on the server.");
       return NextResponse.json({ success: false, message: "Server configuration error: Custodial wallet private key not configured." }, { status: 500 });
     }
 
     let custodialKeypair: Keypair;
     try {
-      const privateKeyBytes = bs58.decode(custodialWalletPrivateKeyBs58);
+      let privateKeyBytes: Uint8Array;
+      // Try to parse as JSON array first (e.g., "[10,20,30,...]")
+      try {
+        const keyArray = JSON.parse(custodialWalletPrivateKeyString);
+        if (Array.isArray(keyArray) && keyArray.every(num => typeof num === 'number')) {
+          privateKeyBytes = Uint8Array.from(keyArray);
+        } else {
+          throw new Error("Parsed JSON is not an array of numbers.");
+        }
+      } catch (jsonError) {
+        // If JSON.parse fails or it's not an array of numbers, assume it's a base58 string
+        privateKeyBytes = bs58.decode(custodialWalletPrivateKeyString);
+      }
       custodialKeypair = Keypair.fromSecretKey(privateKeyBytes);
-    } catch (e) {
-      console.error("Failed to decode or create Keypair from CUSTODIAL_WALLET_PRIVATE_KEY:", e);
+    } catch (e: any) {
+      console.error("Failed to derive Keypair from CUSTODIAL_WALLET_PRIVATE_KEY. Ensure it's a valid base58 string or a JSON string array of numbers representing bytes. Error:", e.message);
       return NextResponse.json({ success: false, message: "Server configuration error: Invalid custodial wallet private key format." }, { status: 500 });
     }
-    
+
     const rpcUrl = getRpcUrl(network, process.env.NEXT_PUBLIC_HELIUS_API_KEY);
     const connection = new Connection(rpcUrl, 'confirmed');
 
@@ -60,7 +73,7 @@ export async function POST(request: Request) {
 
     const sourceAta = getAssociatedTokenAddressSync(mintPublicKey, custodialKeypair.publicKey, false, splTokenProgramId);
     const recipientAta = getAssociatedTokenAddressSync(mintPublicKey, recipientPublicKey, false, splTokenProgramId);
-    
+
     const instructions = [];
 
     // Check if recipient ATA exists, create if not
@@ -105,10 +118,10 @@ export async function POST(request: Request) {
         lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
     });
 
-    return NextResponse.json({ 
-      success: true, 
-      message: `Withdrawal of ${netAmount} ${tokenMint.substring(0,4)}... processed successfully.`, 
-      signature 
+    return NextResponse.json({
+      success: true,
+      message: `Withdrawal of ${netAmount} ${tokenMint.substring(0,4)}... processed successfully.`,
+      signature
     });
 
   } catch (error: any) {
