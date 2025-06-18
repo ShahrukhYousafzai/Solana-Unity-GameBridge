@@ -3,7 +3,7 @@
 
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import React, { createContext, useContext, useState, useMemo } from 'react';
-import { WalletAdapterNetwork } from '@solana/wallet-adapter-base';
+// WalletAdapterNetwork enum is not directly used for values here anymore, types are string literals.
 import { HELIUS_API_KEY, DEFAULT_NETWORK, getRpcUrl } from '@/config';
 import type { SupportedSolanaNetwork } from '@/config';
 
@@ -34,3 +34,4 @@ export const useNetwork = (): NetworkContextState => {
   }
   return context;
 };
+
