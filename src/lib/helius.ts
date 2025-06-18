@@ -127,66 +127,87 @@ const normalizeHeliusAsset = (heliusAsset: HeliusAsset): Asset | null => {
     }
   }
 
+  // Token Processing Logic:
+  let tokenData: SplToken | null = null;
+
+  // Attempt 1: Using heliusAsset.token_info (preferred for modern fungible assets like Token-2022)
   if (heliusAsset.interface === "FungibleAsset" || heliusAsset.interface === "FungibleToken") {
-    if (!heliusAsset.token_info) {
-        console.warn(`Asset ${heliusAsset.id} (Interface: ${heliusAsset.interface}) is missing token_info. Skipping.`);
-        return null;
-    }
-    
-    const ti = heliusAsset.token_info;
-    const decimals = typeof ti.decimals === 'number' ? ti.decimals : 0;
-    const uiBalance = typeof ti.balance === 'number' ? ti.balance : 0;
+    if (heliusAsset.token_info) {
+      const ti = heliusAsset.token_info;
+      // Ensure all necessary fields from token_info are present
+      if (typeof ti.decimals === 'number' && typeof ti.balance === 'number' && (heliusAsset.ownership.token_account || ti.raw_token_amount ) ) {
+        const decimals = ti.decimals;
+        const uiBalance = ti.balance; // This is already decimal-adjusted by Helius
 
-    let rawBalanceBigInt: bigint;
-    if (ti.raw_token_amount && /^\d+$/.test(ti.raw_token_amount)) {
-      rawBalanceBigInt = BigInt(ti.raw_token_amount);
+        let rawBalanceBigInt: bigint;
+        if (ti.raw_token_amount && /^\d+$/.test(ti.raw_token_amount)) {
+          rawBalanceBigInt = BigInt(ti.raw_token_amount);
+        } else {
+          // Fallback if raw_token_amount is missing, calculate from UI balance and decimals
+          rawBalanceBigInt = BigInt(Math.round(uiBalance * (10 ** decimals)));
+        }
+
+        const tokenName = commonName || `Token ${heliusAsset.id.substring(0, 6)}...`;
+        const tokenSymbol = ti.symbol || commonSymbol || heliusAsset.id.substring(0, 4).toUpperCase();
+        
+        tokenData = {
+          id: heliusAsset.id,
+          name: tokenName,
+          symbol: tokenSymbol,
+          imageUrl,
+          type: "token",
+          uri: heliusAsset.content?.json_uri,
+          decimals,
+          balance: uiBalance,
+          rawBalance: rawBalanceBigInt,
+          tokenAddress: heliusAsset.ownership.token_account, // Prefer ownership.token_account from DAS
+          rawHeliusAsset: heliusAsset,
+        };
+      } else {
+         console.warn(`Asset ${heliusAsset.id} (Interface: ${heliusAsset.interface}) has incomplete token_info. Details:`, ti);
+      }
     } else {
-      rawBalanceBigInt = BigInt(Math.round(uiBalance * (10 ** decimals)));
+      console.warn(`Asset ${heliusAsset.id} (Interface: ${heliusAsset.interface}) is missing token_info. Will attempt fallback to spl_token_info if available.`);
     }
+  }
 
-    const tokenName = commonName || `Token ${heliusAsset.id.substring(0, 6)}...`;
-    const tokenSymbol = ti.symbol || commonSymbol || heliusAsset.id.substring(0, 4).toUpperCase();
-    
-    return {
-      id: heliusAsset.id, 
-      name: tokenName,
-      symbol: tokenSymbol,
-      imageUrl, 
-      type: "token",
-      uri: heliusAsset.content?.json_uri,
-      decimals,
-      balance: uiBalance, 
-      rawBalance: rawBalanceBigInt,
-      tokenAddress: heliusAsset.ownership.token_account || heliusAsset.spl_token_info?.token_account,
-      rawHeliusAsset: heliusAsset,
-    } as SplToken;
+  // Attempt 2: Using heliusAsset.spl_token_info (fallback or for older SPL token standards)
+  // This will also catch cases where interface wasn't FungibleAsset/Token but spl_token_info is present,
+  // or if the FungibleAsset/Token processing above couldn't form tokenData.
+  if (!tokenData && heliusAsset.spl_token_info && heliusAsset.id) {
+    const sti = heliusAsset.spl_token_info;
+    // Ensure all necessary fields are present in spl_token_info
+    if (typeof sti.decimals === 'number' && sti.balance && sti.token_account) {
+      const decimals = sti.decimals;
+      // spl_token_info.balance from Helius is typically the raw, non-adjusted string for older SPL tokens.
+      const rawBalance = BigInt(String(sti.balance)); 
+      const balance = Number(rawBalance) / (10 ** decimals); // Calculate UI balance
+
+      const tokenName = commonName || `Token ${heliusAsset.id.substring(0, 6)}...`;
+      const tokenSymbol = commonSymbol || heliusAsset.id.substring(0, 4).toUpperCase();
+
+      tokenData = {
+        id: heliusAsset.id,
+        name: tokenName,
+        symbol: tokenSymbol,
+        imageUrl,
+        type: "token",
+        uri: heliusAsset.content?.json_uri,
+        decimals,
+        balance,
+        rawBalance,
+        tokenAddress: sti.token_account,
+        rawHeliusAsset: heliusAsset,
+      };
+    } else {
+      console.warn(`Asset ${heliusAsset.id} has spl_token_info but it's incomplete. Skipping tokenization via spl_token_info. Details:`, sti);
+    }
+  }
+
+  if (tokenData) {
+    return tokenData;
   }
   
-   // Handling for older or less detailed SPL token representations if needed
-   if (heliusAsset.spl_token_info && heliusAsset.id) { 
-    const sti = heliusAsset.spl_token_info;
-    const decimals = typeof sti.decimals === 'number' ? sti.decimals : 0;
-    const rawBalance = BigInt(sti.balance); // spl_token_info.balance from Helius is typically the raw, non-adjusted string.
-    const balance = Number(rawBalance) / (10 ** decimals); // Calculate UI balance
-
-    const tokenName = commonName || `Token ${heliusAsset.id.substring(0, 6)}...`;
-    const tokenSymbol = commonSymbol || heliusAsset.id.substring(0, 4).toUpperCase();
-
-    return {
-      id: heliusAsset.id, 
-      name: tokenName, 
-      symbol: tokenSymbol, 
-      imageUrl,
-      type: "token",
-      uri: heliusAsset.content?.json_uri,
-      decimals,
-      balance,
-      rawBalance,
-      tokenAddress: sti.token_account,
-      rawHeliusAsset: heliusAsset,
-    } as SplToken;
-  }
-
   return null; 
 };
 
@@ -232,7 +253,9 @@ export const fetchAssetsForOwner = async (
       } else if (asset.type === "cnft") {
         cnfts.push(asset);
       } else if (asset.type === "token") {
-        if (asset.balance > 0 || asset.rawBalance > 0n) { // Ensure tokens with any balance are included
+        // Ensure tokens with any positive balance (either UI or raw) are included
+        // Also include if balance is 0 but rawBalance is also 0 (e.g. an empty token account we might still want to list)
+        if (asset.balance > 0 || asset.rawBalance > 0n || (asset.balance === 0 && asset.rawBalance === 0n)) { 
            tokens.push(asset);
         }
       }
