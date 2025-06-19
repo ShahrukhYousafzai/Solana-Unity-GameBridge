@@ -23,7 +23,6 @@ import { NetworkSwitcher } from "@/components/NetworkSwitcher";
 import { 
   CUSTODIAL_WALLET_ADDRESS, 
   SOL_DECIMALS, 
-  UNITY_GAME_BUILD_BASE_NAME, // Retained for game file paths if needed elsewhere
   UNITY_COMPANY_NAME,
   UNITY_PRODUCT_NAME,
   UNITY_PRODUCT_VERSION
@@ -84,7 +83,7 @@ function debounce<F extends (...args: any[]) => Promise<any>>(func: F, waitFor: 
 export default function HomePage() {
   const { connection } = useConnection();
   const walletHook = useWallet(); 
-  const { wallets: availableWallets, select: selectWalletFn, wallet: currentWalletAdapterDetails } = walletHook; // Renamed select to selectWalletFn
+  const { wallets: availableWallets, select, wallet: currentWalletAdapterDetails } = walletHook; 
   const { toast } = useToast();
   const { currentNetwork, setCurrentNetwork, rpcUrl } = useNetwork();
   const walletModal = useWalletModal();
@@ -92,16 +91,15 @@ export default function HomePage() {
   const walletHookRef = useRef(walletHook); 
   useEffect(() => { walletHookRef.current = walletHook; }, [walletHook]);
 
-  const gameBaseNameOrDefault = UNITY_GAME_BUILD_BASE_NAME || "MyGame";
+  const gameProductNameOrDefault = UNITY_PRODUCT_NAME || "MyGame";
   const gameCompanyNameOrDefault = UNITY_COMPANY_NAME || "DefaultCompany";
-  const gameProductNameOrDefault = UNITY_PRODUCT_NAME || gameBaseNameOrDefault;
   const gameProductVersionOrDefault = UNITY_PRODUCT_VERSION || "1.0";
 
   const { unityProvider, isLoaded, loadingProgression, sendMessage, addEventListener, removeEventListener, UNSAFE__detachAndUnloadImmediate: detachAndUnload } = useUnityContext({
-    loaderUrl: `/Build/${gameBaseNameOrDefault}.loader.js`,
-    dataUrl: `/Build/${gameBaseNameOrDefault}.data`,
-    frameworkUrl: `/Build/${gameBaseNameOrDefault}.framework.js`,
-    codeUrl: `/Build/${gameBaseNameOrDefault}.wasm`,
+    loaderUrl: `/Build/${gameProductNameOrDefault}.loader.js`,
+    dataUrl: `/Build/${gameProductNameOrDefault}.data`,
+    frameworkUrl: `/Build/${gameProductNameOrDefault}.framework.js`,
+    codeUrl: `/Build/${gameProductNameOrDefault}.wasm`,
     companyName: gameCompanyNameOrDefault,
     productName: gameProductNameOrDefault,
     productVersion: gameProductVersionOrDefault,
@@ -140,8 +138,6 @@ export default function HomePage() {
       setCurrentDevicePixelRatio(window.devicePixelRatio);
     }
   }, []);
-
-  // Removed the useEffect hook that called select(null) on initial load using initialLoadWalletProcessedRef
 
   const sendToUnityGame = useCallback((gameObjectName: string, methodName: string, message: any) => {
     if (isLoaded && sendMessage) { 
@@ -237,7 +233,6 @@ export default function HomePage() {
     const currentPkString = publicKey?.toBase58();
   
     if (!isLoaded) {
-      // console.log("[Page RUW WalletEffect] Unity not ready (isLoaded is false), skipping asset load/wallet status update to Unity for this render.");
       return;
     }
   
@@ -271,14 +266,35 @@ export default function HomePage() {
     prevConnectedStateForRefreshRef.current = connected;
   }, [walletHookRef.current.connected]);
 
+  const previousModalVisibilityRef = useRef(walletModal.visible);
+  const previousSelectedWalletNameRef = useRef<string | null | undefined>(null);
+
+  useEffect(() => {
+      const { wallet, connected, connecting, connect: walletConnectAdapter } = walletHookRef.current;
+      const currentSelectedWalletName = wallet?.adapter.name;
+
+      if (previousModalVisibilityRef.current && !walletModal.visible) { // Modal just closed
+          if (currentSelectedWalletName && currentSelectedWalletName !== previousSelectedWalletNameRef.current) { // And a new wallet was selected
+              if (!connected && !connecting) {
+                  console.log(`[Page RUW ModalCloseEffect] Modal closed with new wallet ${currentSelectedWalletName} selected. Attempting to connect.`);
+                  walletConnectAdapter?.().catch((error) => {
+                      console.error(`[Page RUW ModalCloseEffect] Auto-connection failed for ${currentSelectedWalletName}:`, error);
+                      toast({ title: `Failed to connect ${currentSelectedWalletName}`, description: error.message, variant: "destructive" });
+                      sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: error.message, action: "auto_connect_after_modal_select" });
+                  });
+              }
+          }
+      }
+      previousModalVisibilityRef.current = walletModal.visible;
+      previousSelectedWalletNameRef.current = currentSelectedWalletName;
+  }, [walletModal.visible, walletHookRef, toast, sendToUnityGame]);
+
 
   useEffect(() => {
     console.log("[Page RUW BridgeEffect] Setting up global handlers and react-unity-webgl event listeners. RUW isLoaded:", isLoaded);
     
     window.handleConnectWalletRequest = async (walletNameFromUnity?: string) => {
-      if (!isLoaded) { console.warn("[Page RUW Global] handleConnectWalletRequest: Unity not ready."); return; }
-      
-      const { connected, connecting, select, connect: walletConnectAdapter, wallet } = walletHookRef.current;
+      const { select: selectWalletFn, wallet, connect: walletConnectAdapter, connected, connecting } = walletHookRef.current;
 
       if (connected) {
         console.log("[Page RUW Global] Already connected. PK:", walletHookRef.current.publicKey?.toBase58());
@@ -287,61 +303,55 @@ export default function HomePage() {
       }
 
       if (connecting) {
-        console.warn("[Page RUW Global] Wallet connection already in progress. Ignoring request.");
-        toast({ title: "Connection In Progress", description: "Please wait for the current connection attempt to complete.", variant: "default" });
+        console.warn("[Page RUW Global] Wallet connection already in progress.");
+        toast({ title: "Connection In Progress", description: "Please wait.", variant: "default" });
         sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: "Connection in progress.", action: "connect_wallet_in_progress" });
         return;
       }
 
-      let adapterToConnect: WalletAdapter | undefined = undefined;
-
       if (walletNameFromUnity) {
-        const found = availableWallets.find(w => w.adapter.name === walletNameFromUnity);
-        if (found) {
-          adapterToConnect = found.adapter;
-          if (adapterToConnect.readyState !== WalletReadyState.Installed && adapterToConnect.readyState !== WalletReadyState.Loadable) {
-            sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: `${walletNameFromUnity} not ready. Please install or choose another.`, action: "connect_wallet_not_ready" });
-            select(null); 
+        const targetAdapter = availableWallets.find(w => w.adapter.name === walletNameFromUnity)?.adapter;
+        if (targetAdapter) {
+          if (targetAdapter.readyState === WalletReadyState.Installed || targetAdapter.readyState === WalletReadyState.Loadable) {
+            console.log(`[Page RUW Global] Wallet specified by Unity: ${walletNameFromUnity}. Selecting and attempting to connect.`);
+            if (wallet?.adapter.name !== targetAdapter.name) {
+              selectWalletFn(targetAdapter.name as WalletName);
+              await new Promise(resolve => setTimeout(resolve, 200)); 
+            }
+            const newlySelectedWallet = walletHookRef.current.wallet;
+            if (newlySelectedWallet?.adapter.name === targetAdapter.name && !walletHookRef.current.connected && !walletHookRef.current.connecting) {
+              walletConnectAdapter?.().catch(error => {
+                toast({ title: `Failed to connect ${targetAdapter.name}`, description: error.message, variant: "destructive" });
+                sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: error.message, details: error.name, action: `connect_wallet_${targetAdapter.name}` });
+              });
+            } else if (walletHookRef.current.connected) {
+               sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: walletHookRef.current.publicKey?.toBase58() });
+            }
+            return;
+          } else {
+            sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: `${walletNameFromUnity} not ready. Please install or choose another. Opening modal.`, action: "connect_wallet_not_ready_modal_fallback" });
+            selectWalletFn(null); // Clear any sticky selection
             walletModal.setVisible(true);
             return;
           }
-          if (wallet?.adapter.name !== adapterToConnect.name) {
-            console.log(`[Page RUW Global] Selecting wallet via Unity request: ${adapterToConnect.name}`);
-            select(adapterToConnect.name);
-            await new Promise(resolve => setTimeout(resolve, 150)); 
-          }
         } else {
-          sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: `Wallet ${walletNameFromUnity} not found. Please choose.`, action: "connect_wallet_not_found" });
-          select(null);
+          sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: `Wallet ${walletNameFromUnity} not found. Opening modal.`, action: "connect_wallet_not_found_modal_fallback" });
+          selectWalletFn(null);
           walletModal.setVisible(true);
           return;
         }
-      } else { 
-        console.log("[Page RUW Global] No specific wallet from Unity. Clearing selection and opening modal.");
-        select(null); 
+      } else {
+        // No specific wallet from Unity - standard modal flow.
+        // The useEffect hook above will handle connecting after modal closes if a selection is made.
+        console.log("[Page RUW Global] No specific wallet from Unity. Clearing potentially stale selection and opening wallet modal.");
+        // Clear selection if the current "sticky" wallet is not ready, to ensure modal shows fairly.
+        if (wallet && (wallet.adapter.readyState !== WalletReadyState.Installed && wallet.adapter.readyState !== WalletReadyState.Loadable)) {
+           selectWalletFn(null); 
+        } else if (!wallet) { // If no wallet is selected at all
+           selectWalletFn(null); // Ensure it's explicitly null before showing modal
+        }
         walletModal.setVisible(true);
         sendToUnityGame("GameBridgeManager", "OnWalletSelectionNeeded", { message: `Please select a wallet.` });
-        return; 
-      }
-      
-      const currentlySelectedWalletAdapter = walletHookRef.current.wallet?.adapter;
-      if (currentlySelectedWalletAdapter && 
-          (currentlySelectedWalletAdapter.readyState === WalletReadyState.Installed || currentlySelectedWalletAdapter.readyState === WalletReadyState.Loadable) &&
-          !walletHookRef.current.connected && !walletHookRef.current.connecting) {
-        console.log(`[Page RUW Global] Attempting to connect to selected adapter: ${currentlySelectedWalletAdapter.name}`);
-        try {
-          await walletConnectAdapter(); 
-        } catch (error: any) {
-          console.error(`[Page RUW Global] Error during connect call for ${currentlySelectedWalletAdapter.name}:`, error);
-          toast({ title: "Connection Failed", description: error.message, variant: "destructive" });
-          sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: error.message, details: error.name, action: "connect_wallet_attempt_after_select" });
-          select(null); 
-          walletModal.setVisible(true); 
-        }
-      } else if (walletNameFromUnity && !currentlySelectedWalletAdapter) {
-        console.warn(`[Page RUW Global] Adapter ${walletNameFromUnity} was requested by Unity, but no adapter is selected in the hook after attempting to select. Modal will be shown.`);
-        select(null);
-        walletModal.setVisible(true);
       }
     };
         
@@ -379,11 +389,11 @@ export default function HomePage() {
 
     window.handleSelectWalletRequest = async (walletName: string) => {
       if (!isLoaded) { console.warn("[Page RUW Global] handleSelectWalletRequest: Unity not ready."); return; }
-      const { select } = walletHookRef.current; // Get the select function from the hook
+      const { select: reactSelectWallet } = walletHookRef.current; 
       try {
         const targetWallet = availableWallets.find(w => w.adapter.name === walletName);
         if (!targetWallet) { throw new Error(`Wallet ${walletName} not available.`); }
-        select(walletName as WalletName); 
+        reactSelectWallet(walletName as WalletName); 
         console.log(`[Page RUW Global] Wallet selected via handleSelectWalletRequest: ${walletName}. Connect if needed.`);
         if(isLoaded) sendToUnityGame("GameBridgeManager", "OnWalletSelectAttempted", { walletName });
       } catch (error: any) {
@@ -589,7 +599,7 @@ export default function HomePage() {
       removeEventListener("OnGameBridgeManagerReady", handleGameBridgeManagerReady);
     };
   }, [
-      isLoaded, connection, walletModal, availableWallets, selectWalletFn, setCurrentNetwork, // Use selectWalletFn
+      isLoaded, connection, walletModal, availableWallets, select, setCurrentNetwork, 
       sendToUnityGame, toast, fetchSolBalanceInternal, debouncedLoadUserAssets, 
       addEventListener, removeEventListener, sendMessage 
   ]);
@@ -618,7 +628,7 @@ export default function HomePage() {
           <div className="flex-1 flex justify-center">
             {isClientMounted && (
               <Image
-                src="/Logo.png" 
+                src="/Logo.png"
                 alt={`${gameProductNameOrDefault} Logo`}
                 width={40} 
                 height={40} 
@@ -648,7 +658,7 @@ export default function HomePage() {
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-background z-50">
              <div className="w-60 h-60 mb-4">
                 <Image
-                     src="/Logo.png" 
+                     src="/Logo.png"
                      alt="Game Logo"
                      width={240}
                      height={240}
@@ -664,7 +674,6 @@ export default function HomePage() {
              <div className="w-1/2 max-w-md mt-2 h-2 bg-muted rounded-full overflow-hidden">
                 <div className="h-full bg-primary transition-all duration-150" style={{ width: `${loadingPercentage}%`}}></div>
              </div>
-             <p className="text-xs text-muted-foreground mt-2 px-4 text-center">Hang tight — it might take a bit longer to load if it is the first time.</p>
           </div>
         ) : null}
         {isClientMounted && unityProvider && ( 
