@@ -78,7 +78,9 @@ public class MainMenuManager : MonoBehaviour
             _isWalletConnected = true; // Mark as connected
             if(connectButton) connectButton.gameObject.SetActive(false); // Hide connect button
             // walletConnectPanel should be hidden by ShowGameMenu
-            StartCoroutine(ShowGameMenu());
+            StartCoroutine(ShowGameMenu(true)); // Pass true to indicate assets should be fetched
+        } else {
+            StartCoroutine(ShowGameMenu(false)); // Pass false if no wallet connected yet
         }
 
         // Subscribe to wallet events from GameBridgeManager
@@ -129,8 +131,6 @@ public class MainMenuManager : MonoBehaviour
     public void ConnectWallet()
     {
         Debug.Log("MainMenuManager: ConnectWallet called. Attempting via WebWalletBridge.");
-        // Initiate wallet connection via the WebWalletBridge which calls the .jslib function
-        // Ensure WebWalletBridge.Instance is available and its BridgeConnectWallet method exists.
         if (WebWalletBridge.Instance != null)
         {
             WebWalletBridge.Instance.BridgeConnectWallet();
@@ -177,7 +177,7 @@ public class MainMenuManager : MonoBehaviour
             if(connectButton) connectButton.gameObject.SetActive(false);
             ToastNotification.Show($"Connected: {FormatWalletAddress(_publicKey)}", "success");
             PlayerPrefs.SetString("WalletAddress", _publicKey);
-            StartCoroutine(ShowGameMenu());
+            StartCoroutine(ShowGameMenu(true)); // Pass true to indicate assets should be fetched now
         }, error =>
         {
             Debug.LogError("MainMenuManager: PlayFab Login Error: " + error.GenerateErrorReport());
@@ -227,16 +227,14 @@ public class MainMenuManager : MonoBehaviour
         return $"{address.Substring(0, 4)}...{address.Substring(address.Length - 4)}";
     }
 
-    IEnumerator ShowGameMenu()
+    IEnumerator ShowGameMenu(bool fetchAssets)
     {
-        if (NFTsManager.Instance != null)
+        if (fetchAssets && _isWalletConnected && !string.IsNullOrEmpty(_publicKey))
         {
-            NFTsManager.Instance.StartCoroutine(NFTsManager.Instance.DetectNFTs());
+            RequestUserAssetsFromBridge(); // Request assets if wallet is connected
         }
-        else
-        {
-            Debug.LogWarning("MainMenuManager: NFTsManager.Instance is null. Skipping NFT detection.");
-        }
+        // Removed NFTsManager.Instance.StartCoroutine(NFTsManager.Instance.DetectNFTs());
+        // NFTsManager is not part of the provided code.
 
         if (loadingSlider != null) {
             float duration = 3f;
@@ -255,6 +253,27 @@ public class MainMenuManager : MonoBehaviour
         if(LoadingPanel) LoadingPanel.SetActive(false);
         if(LobbyPanel) LobbyPanel.SetActive(true);
         if(walletConnectPanel) walletConnectPanel.SetActive(false); // Hide wallet connect panel after successful connection and loading
+    }
+
+    private void RequestUserAssetsFromBridge()
+    {
+        if (WebWalletBridge.Instance != null)
+        {
+            if (_isWalletConnected && !string.IsNullOrEmpty(_publicKey))
+            {
+                Debug.Log("MainMenuManager: Requesting user assets (NFTs and Tokens) from bridge.");
+                WebWalletBridge.Instance.BridgeGetUserNFTs(); 
+                WebWalletBridge.Instance.BridgeGetUserTokens(); 
+            }
+            else
+            {
+                Debug.LogWarning("MainMenuManager: Cannot request assets - wallet not connected or public key is missing.");
+            }
+        }
+        else
+        {
+            Debug.LogError("MainMenuManager: WebWalletBridge.Instance is null. Cannot request assets.");
+        }
     }
 
     public void Logout()
@@ -288,6 +307,5 @@ public class MainMenuManager : MonoBehaviour
 // public class ItemSelect : MonoBehaviour { public Sprite[] itemIcons; }
 // Example structure for ToastNotification if not defined:
 // public static class ToastNotification { public static void Show(string message, string type) { Debug.Log($"Toast [{type}]: {message}"); } }
-
 
     

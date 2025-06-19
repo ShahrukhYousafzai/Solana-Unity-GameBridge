@@ -124,26 +124,21 @@ public class ItemSelect : MonoBehaviour
 
     // NFT Ownership tracking
     private List<string> ownedCarNFTNames = new List<string>(); // Stores names of owned car NFTs (standard or cNFTs)
-    private string ownerAddress = "";
-    private const string carCollectionAddress = "qJhfDwLsjzjnjNw3Fz8ESji8zAWVWNP5AYDZXjxF1fd";
-    private const string boosterCollectionAddress = "hUEKA85VywTT43c2s3Vd9Nsem1j1xTWbUPYLppY7Nzb";
-    // Removed: private const string apiKey = "ce2bbb77-5585-4ce4-bfb3-8feb9860222a"; // API key is used on server/web page now
-    private bool assetsInitialized = false; // Renamed from nftsFetched
+    private string ownerAddress = ""; // This will be set if found in PlayerPrefs, but asset loading is now reactive
+    private const string carCollectionAddress = "qJhfDwLsjzjnjNw3Fz8ESji8zAWVWNP5AYDZXjxF1fd"; // Ensure this is correct
+    private const string boosterCollectionAddress = "hUEKA85VywTT43c2s3Vd9Nsem1j1xTWbUPYLppY7Nzb"; // Ensure this is correct
+    private bool assetsInitialized = false; 
 
     // Booster NFT System
     [Header("Booster NFT System")]
     public GameObject boosterNFTPrefab;
     public Transform scrollRectContent;
-    private List<BridgeUnityCNft> ownedBoosterNFTs = new List<BridgeUnityCNft>(); // Changed type
+    private List<BridgeUnityCNft> ownedBoosterNFTs = new List<BridgeUnityCNft>();
     private Dictionary<string, Sprite> boosterSprites = new Dictionary<string, Sprite>();
 
     // Season management
     private DateTime seasonStartDate;
     private const int seasonLengthDays = 28;
-    // private float currentBoostMultiplier = 1f; // This seems to be calculated dynamically
-
-    // Top Speed System
-    // private float currentTopSpeed = 100f; // This seems to be calculated dynamically
 
     [Header("Season UI")]
     public TMPro.TMP_Text seasonTimerTxt;
@@ -156,7 +151,6 @@ public class ItemSelect : MonoBehaviour
     [Header("NFT Burning")]
     public GameObject burnConfirmationPanel;
     public TMP_Text burnStatusText;
-    // Removed: private const string BURN_ADDRESS = "1nc1nerator11111111111111111111111111111111"; // Burn address is handled by JS bridge now for cNFTs or SPL
 
     public Button PracticeButton;
     public Button MultiplayerButton;
@@ -176,14 +170,15 @@ public class ItemSelect : MonoBehaviour
 
     void Start()
     {
+        // Get owner address if available, but primary asset loading relies on events
         if (PlayerPrefs.HasKey("WalletAddress"))
         {
             ownerAddress = PlayerPrefs.GetString("WalletAddress");
+            Debug.Log($"ItemSelect: WalletAddress found in PlayerPrefs at Start: {ownerAddress}");
         }
         else
         {
-            Debug.LogWarning("ItemSelect: WalletAddress not found in PlayerPrefs at Start. NFT functionalities might be limited until address is set.");
-            // Potentially disable NFT related UI or show a "Connect Wallet" prompt
+            Debug.LogWarning("ItemSelect: WalletAddress not found in PlayerPrefs at Start. NFT functionalities depend on assets loaded via GameBridgeManager.");
         }
 
         coinsTXT.text = PlayerPrefs.GetInt("Coins", 0).ToString();
@@ -210,7 +205,7 @@ public class ItemSelect : MonoBehaviour
         }
 
         canAnim = true;
-        UpdateLockStatus(); // Initial lock status based on no NFTs fetched
+        UpdateLockStatus(); // Initial lock status based on no NFTs fetched (assetsInitialized is false)
 
         if (itemsPrice.Length > id)
             CurentValue.text = itemsPrice[id].ToString();
@@ -221,16 +216,16 @@ public class ItemSelect : MonoBehaviour
         if (itemType == ItemType.Car)
         {
             InitializeSeason();
-            // UpdateBoostMultiplier(); // Called within InitializeSeason and HandleAssetsLoaded
-            StartCoroutine(InitializeAssets());
+            // Asset initialization (StartCoroutine(InitializeAssets())) is removed.
+            // We now solely rely on OnAssetsLoadedEvent from GameBridgeManager.
         }
         
         // Subscribe to GameBridgeManager events
         if (GameBridgeManager.Instance != null)
         {
             GameBridgeManager.Instance.OnAssetsLoadedEvent += HandleAssetsLoaded;
-            GameBridgeManager.Instance.OnTransactionSubmittedEvent += HandleAssetBurnSuccess; // Assuming burn success uses this
-            GameBridgeManager.Instance.OnTransactionErrorEvent += HandleAssetBurnError; // Assuming burn error uses this
+            GameBridgeManager.Instance.OnTransactionSubmittedEvent += HandleAssetBurnSuccess; 
+            GameBridgeManager.Instance.OnTransactionErrorEvent += HandleAssetBurnError;
         }
         else
         {
@@ -248,35 +243,22 @@ public class ItemSelect : MonoBehaviour
         }
     }
     
-    IEnumerator InitializeAssets()
-    {
-        if (string.IsNullOrEmpty(ownerAddress))
-        {
-            Debug.LogWarning("ItemSelect: Owner address is empty, cannot fetch assets. Waiting for wallet connection.");
-            yield break; // Or retry later, or wait for an event indicating wallet is connected
-        }
-
-        // Request assets via the bridge. The actual data will come via OnAssetsLoadedEvent.
-        if (WebWalletBridge.Instance != null)
-        {
-            Debug.Log("ItemSelect: Requesting user assets (NFTs and Tokens) via bridge.");
-            WebWalletBridge.Instance.BridgeGetUserNFTs(); // This could be a generic "GetAllAssets" if available
-            WebWalletBridge.Instance.BridgeGetUserTokens(); // Or combine them
-        }
-        else
-        {
-            Debug.LogError("ItemSelect: WebWalletBridge.Instance is null. Cannot request assets.");
-        }
-        // assetsInitialized will be set to true in HandleAssetsLoaded
-        yield return null; // Wait for events
-    }
-
+    // Removed IEnumerator InitializeAssets() - MainMenuManager now triggers asset loading.
 
     void HandleAssetsLoaded(string jsonData)
     {
-        Debug.Log("ItemSelect: Received OnAssetsLoadedEvent: " + jsonData);
+        Debug.Log("ItemSelect: Received OnAssetsLoadedEvent. JSON: " + jsonData);
         ownedCarNFTNames.Clear();
         ownedBoosterNFTs.Clear();
+
+        if (string.IsNullOrEmpty(jsonData) || jsonData.Trim() == "{}") {
+            Debug.LogWarning("ItemSelect: HandleAssetsLoaded received empty or trivial JSON data. No assets to process.");
+            assetsInitialized = true; // Mark as initialized even if no assets, to allow normal game flow.
+            UpdateLockStatus();
+            CreateBoosterUI(); 
+            SaveNFTData();
+            return;
+        }
 
         try
         {
@@ -284,54 +266,67 @@ public class ItemSelect : MonoBehaviour
 
             if (payload != null)
             {
-                if (payload.nfts != null) // Process standard NFTs (potentially for cars)
+                 Debug.Log($"ItemSelect: Parsed payload. NFTs count: {(payload.nfts != null ? payload.nfts.Count : 0)}, cNFTs count: {(payload.cnfts != null ? payload.cnfts.Count : 0)}");
+
+                if (payload.nfts != null) 
                 {
                     foreach (BridgeUnityNft nft in payload.nfts)
                     {
+                        Debug.Log($"ItemSelect: Processing NFT - Name: {nft.name}, ID: {nft.id}, Collection ID: {(nft.collection != null ? nft.collection.id : "N/A")}");
                         if (nft.collection != null && nft.collection.id == carCollectionAddress)
                         {
                             if (!string.IsNullOrEmpty(nft.name))
                             {
                                 ownedCarNFTNames.Add(nft.name);
-                                Debug.Log($"Added owned car NFT: {nft.name}");
+                                Debug.Log($"ItemSelect: Added owned standard car NFT: {nft.name}");
+                            } else {
+                                Debug.LogWarning($"ItemSelect: Owned standard car NFT from collection {carCollectionAddress} has no name. ID: {nft.id}");
                             }
                         }
                     }
                 }
                 
-                if (payload.cnfts != null) // Process cNFTs (for boosters and potentially cars if they are cNFTs)
+                if (payload.cnfts != null) 
                 {
                     foreach (BridgeUnityCNft cnft in payload.cnfts)
                     {
+                        Debug.Log($"ItemSelect: Processing cNFT - Name: {cnft.name}, ID: {cnft.id}, Collection ID: {(cnft.collection != null ? cnft.collection.id : "N/A")}");
                         if (cnft.collection != null)
                         {
                              if (cnft.collection.id == boosterCollectionAddress)
                              {
                                 ownedBoosterNFTs.Add(cnft);
-                                Debug.Log($"Added owned booster cNFT: {cnft.name} (ID: {cnft.id})");
+                                Debug.Log($"ItemSelect: Added owned booster cNFT: {cnft.name} (ID: {cnft.id})");
                              }
-                             else if (cnft.collection.id == carCollectionAddress) // If cars can also be cNFTs
+                             else if (cnft.collection.id == carCollectionAddress) 
                              {
                                  if (!string.IsNullOrEmpty(cnft.name))
                                  {
                                      ownedCarNFTNames.Add(cnft.name);
-                                     Debug.Log($"Added owned car cNFT: {cnft.name}");
+                                     Debug.Log($"ItemSelect: Added owned compressed car NFT: {cnft.name}");
+                                 } else {
+                                     Debug.LogWarning($"ItemSelect: Owned compressed car NFT from collection {carCollectionAddress} has no name. ID: {cnft.id}");
                                  }
                              }
                         }
                     }
                 }
+                Debug.Log($"ItemSelect: Finished processing. Total ownedCarNFTNames: {ownedCarNFTNames.Count}, Total ownedBoosterNFTs: {ownedBoosterNFTs.Count}");
+            }
+            else
+            {
+                Debug.LogWarning("ItemSelect: JSON payload was null after parsing in HandleAssetsLoaded.");
             }
         }
         catch (Exception e)
         {
-            Debug.LogError("ItemSelect: JSON Parse Error in HandleAssetsLoaded: " + e.Message + "\nJSON: " + jsonData);
+            Debug.LogError("ItemSelect: JSON Parse Error in HandleAssetsLoaded: " + e.Message + "\nAttempted to parse JSON: " + jsonData);
         }
 
         assetsInitialized = true;
         UpdateLockStatus();
-        CreateBoosterUI(); // This also calls UpdateBoostMultiplier
-        SaveNFTData(); // Save counts and effective boost
+        CreateBoosterUI(); 
+        SaveNFTData(); 
     }
 
 
@@ -350,8 +345,6 @@ public class ItemSelect : MonoBehaviour
         {
             StartNewSeason();
         }
-
-        // UpdateBoostMultiplier(); // Called by CreateBoosterUI after assets are processed
         UpdateTopSpeed();
 
         if (ShouldBurnExpiredNFTs())
@@ -373,7 +366,7 @@ public class ItemSelect : MonoBehaviour
         seasonStartDate = DateTime.Now;
         PlayerPrefs.SetString("SeasonStartDate", seasonStartDate.ToBinary().ToString());
         Debug.Log("New season started!");
-        UpdateBoostMultiplier(); // Recalculate boost as season might affect it
+        UpdateBoostMultiplier(); 
     }
 
     IEnumerator BurnExpiredNFTs()
@@ -388,7 +381,6 @@ public class ItemSelect : MonoBehaviour
         Debug.Log($"Starting to burn {ownedBoosterNFTs.Count} expired booster NFTs.");
         burnConfirmationPanel.SetActive(true);
         
-        // Create a temporary list to iterate over, as ownedBoosterNFTs might be modified by event handlers
         List<BridgeUnityCNft> boostersToBurn = new List<BridgeUnityCNft>(ownedBoosterNFTs);
 
         foreach (BridgeUnityCNft booster in boostersToBurn)
@@ -401,7 +393,6 @@ public class ItemSelect : MonoBehaviour
             Debug.Log($"Requesting burn for cNFT: {booster.name} (ID: {booster.id})");
             if (WebWalletBridge.Instance != null)
             {
-                // Assuming BridgeBurnAsset handles both NFT and cNFT, amount 1 for non-fungibles
                 WebWalletBridge.Instance.BridgeBurnAsset(booster.id, 1); 
             }
             else
@@ -413,19 +404,10 @@ public class ItemSelect : MonoBehaviour
                     burnStatusText.color = Color.red;
                 }
             }
-            yield return new WaitForSeconds(1f); // Small delay between burn requests if needed, or wait for event
+            yield return new WaitForSeconds(1f); 
         }
         
-        // Note: The actual removal from ownedBoosterNFTs and UI updates
-        // will happen in HandleAssetBurnSuccess.
-        // We set LastBurnDate after initiating all burns.
         PlayerPrefs.SetString("LastBurnDate", DateTime.Now.ToBinary().ToString());
-
-        // The panel might be hidden by the event handlers after the last successful burn.
-        // Consider a flag or counter if you want it to hide only after all are processed.
-        // For now, let's assume individual burn messages are sufficient.
-        // yield return new WaitForSeconds(3f); // This delay might be premature
-        // burnConfirmationPanel.SetActive(false); // Let event handlers manage this better
     }
 
     void HandleAssetBurnSuccess(string jsonData)
@@ -445,18 +427,9 @@ public class ItemSelect : MonoBehaviour
                 }
                 ownedBoosterNFTs.RemoveAll(b => b.id == result.mint);
                 
-                // If all intended burns are done, update UI and potentially hide panel
-                // This needs more logic if tracking multiple burns from BurnExpiredNFTs
-                CreateBoosterUI(); // Refresh booster UI
+                CreateBoosterUI(); 
                 UpdateBoostMultiplier();
                 SaveNFTData();
-
-                // Optional: Hide burn panel if no more boosters are pending burn from the "expired" batch
-                // This part is tricky without knowing if this is the *last* burn confirmation.
-                // For now, let the user close it or it times out.
-                // if (ownedBoosterNFTs.Count == 0 && burnConfirmationPanel.activeSelf) {
-                //     StartCoroutine(DelayedHideBurnPanel(2f));
-                // }
             }
         }
         catch (Exception e)
@@ -465,12 +438,6 @@ public class ItemSelect : MonoBehaviour
         }
     }
     
-    // IEnumerator DelayedHideBurnPanel(float delay)
-    // {
-    //     yield return new WaitForSeconds(delay);
-    //     if (burnConfirmationPanel != null) burnConfirmationPanel.SetActive(false);
-    // }
-
     void HandleAssetBurnError(string jsonData)
     {
         Debug.Log("ItemSelect: HandleAssetBurnError: " + jsonData);
@@ -485,7 +452,6 @@ public class ItemSelect : MonoBehaviour
                     burnStatusText.text = $"Burn Failed: {result.mint?.Substring(0,6)+"..."} - {result.error}";
                     burnStatusText.color = Color.red;
                 }
-                // Don't remove from ownedBoosterNFTs on error, as it wasn't burned.
             }
         }
         catch (Exception e)
@@ -500,25 +466,23 @@ public class ItemSelect : MonoBehaviour
     {
         Debug.Log("Forcing season reset for testing...");
         PlayerPrefs.DeleteKey("LastBurnDate");
-        seasonStartDate = DateTime.Now.AddDays(-seasonLengthDays - 1); // Ensure season is definitely over
+        seasonStartDate = DateTime.Now.AddDays(-seasonLengthDays - 1); 
         PlayerPrefs.SetString("SeasonStartDate", seasonStartDate.ToBinary().ToString());
 
-        // Clear current boosters and add some test ones
         ownedBoosterNFTs.Clear();
         for (int i = 0; i < 3; i++)
         {
             ownedBoosterNFTs.Add(new BridgeUnityCNft()
             {
-                id = "TestcNFT_Booster_" + Guid.NewGuid().ToString(), // Unique ID for testing
+                id = "TestcNFT_Booster_" + Guid.NewGuid().ToString(), 
                 name = "Test Booster " + i,
-                imageUrl = "https://placehold.co/100x100.png", // Placeholder image
+                imageUrl = "https://placehold.co/100x100.png", 
                 collection = new BridgeUnityCollection { id = boosterCollectionAddress, name = "Test Booster Collection" }
             });
         }
         Debug.Log($"Added {ownedBoosterNFTs.Count} test booster cNFTs");
-        CreateBoosterUI(); // Update UI with test NFTs
+        CreateBoosterUI(); 
         
-        // Now check if they should be burned (they should)
         if (ShouldBurnExpiredNFTs())
         {
             StartCoroutine(BurnExpiredNFTs());
@@ -531,7 +495,6 @@ public class ItemSelect : MonoBehaviour
         {
             int daysPassed = (int)(DateTime.Now - seasonStartDate).TotalDays;
             debugText.text = $"Owned Boosters: {ownedBoosterNFTs.Count}\n" +
-                            // $"Multiplier: {currentBoostMultiplier:F2}x\n" + // currentBoostMultiplier is not a field
                             $"Season Day: {daysPassed + 1}\n" +
                             $"Base Speed: {CalculateTopSpeedForDay(daysPassed + 1)}%\n";
         }
@@ -566,14 +529,14 @@ public class ItemSelect : MonoBehaviour
             {
                 if (!PlayerPrefs.HasKey("SeasonJustReset") || PlayerPrefs.GetInt("SeasonJustReset") == 0)
                 {
-                    PlayerPrefs.SetInt("SeasonJustReset", 1); // Flag to prevent multiple resets in short succession
+                    PlayerPrefs.SetInt("SeasonJustReset", 1); 
                     Debug.Log("Season timer expired. Starting new season and burning expired NFTs.");
-                    StartNewSeason(); // This will re-evaluate ShouldBurnExpiredNFTs
-                    if (ShouldBurnExpiredNFTs()) // Check again after new season starts
+                    StartNewSeason(); 
+                    if (ShouldBurnExpiredNFTs()) 
                     {
                         StartCoroutine(BurnExpiredNFTs());
                     }
-                    PlayerPrefs.SetInt("SeasonJustReset", 0); // Reset flag
+                    PlayerPrefs.SetInt("SeasonJustReset", 0); 
                 }
             }
         }
@@ -585,14 +548,14 @@ public class ItemSelect : MonoBehaviour
         if (topSpeedTxt == null) return;
 
         int totalRacesCompleted = PlayerPrefs.GetInt("TotalRacesCompleted", 0);
-        float baseTopSpeed = CalculateTopSpeedForDay((int)(DateTime.Now - seasonStartDate).TotalDays + 1); // Use current season day for base speed
+        float baseTopSpeed = CalculateTopSpeedForDay((int)(DateTime.Now - seasonStartDate).TotalDays + 1); 
 
         float effectiveBoost = GetEffectiveNFTBoost(totalRacesCompleted);
         float actualPower = baseTopSpeed + effectiveBoost;
-        actualPower = Mathf.Max(0, actualPower); // Ensure power is not negative
+        actualPower = Mathf.Max(0, actualPower); 
 
         PlayerPrefs.SetFloat("CurrentTopSpeed", actualPower);
-        PlayerPrefs.SetFloat("SpeedMultiplier", actualPower / 100f); // Assuming 100% is the reference for multiplier
+        PlayerPrefs.SetFloat("SpeedMultiplier", actualPower / 100f); 
         topSpeedTxt.text = $"Top Speed: {actualPower:F2}%";
 
         if (debugText != null)
@@ -607,7 +570,7 @@ public class ItemSelect : MonoBehaviour
         }
     }
 
-    private float GetTotalNFTBoost() // This function seems to calculate max potential boost, not currently used for effective boost directly
+    private float GetTotalNFTBoost() 
     {
         int nftCount = ownedBoosterNFTs.Count;
         float totalBoost = 0f;
@@ -621,7 +584,7 @@ public class ItemSelect : MonoBehaviour
 
     float CalculateTopSpeedForDay(int day)
     {
-        day = Mathf.Max(1, day); // Ensure day is at least 1
+        day = Mathf.Max(1, day); 
         switch (day)
         {
             case 1: return 100f; case 2: return 98.75f; case 3: return 97.5f; case 4: return 96.25f;
@@ -635,7 +598,7 @@ public class ItemSelect : MonoBehaviour
         }
     }
 
-    void UpdateBoostMultiplier() // This updates the UI text for boost
+    void UpdateBoostMultiplier() 
     {
         if (boostPercentageTxt == null) return;
         int totalRacesCompleted = PlayerPrefs.GetInt("TotalRacesCompleted", 0);
@@ -671,21 +634,15 @@ public class ItemSelect : MonoBehaviour
         }
     }
 
-    // Removed FetchNFTs coroutine - handled by GameBridgeManager.OnAssetsLoadedEvent now
-
-    // ProcessNFTResponse is now HandleAssetsLoaded
-
     void SaveNFTData()
     {
-        PlayerPrefs.SetInt("OwnedBoosterNFTCount", ownedBoosterNFTs.Count); // Changed to save booster count
+        PlayerPrefs.SetInt("OwnedBoosterNFTCount", ownedBoosterNFTs.Count);
         int totalRaces = PlayerPrefs.GetInt("TotalRacesCompleted", 0);
         float effectiveBoost = GetEffectiveNFTBoost(totalRaces);
         PlayerPrefs.SetFloat("EffectiveNFTBoost", effectiveBoost);
-        PlayerPrefs.Save(); // Good practice to call Save
-        Debug.Log($"Saved NFT Data: Booster Count = {ownedBoosterNFTs.Count}, Effective Boost = {effectiveBoost}");
+        PlayerPrefs.Save(); 
+        Debug.Log($"ItemSelect: Saved NFT Data - Booster Count = {ownedBoosterNFTs.Count}, Effective Boost = {effectiveBoost}");
     }
-
-    // GetCollectionAddress is now used within HandleAssetsLoaded
 
     void CreateBoosterUI()
     {
@@ -694,11 +651,11 @@ public class ItemSelect : MonoBehaviour
             Destroy(child.gameObject);
         }
 
-        foreach (BridgeUnityCNft booster in ownedBoosterNFTs) // Changed type
+        foreach (BridgeUnityCNft booster in ownedBoosterNFTs) 
         {
             GameObject boosterUI = Instantiate(boosterNFTPrefab, scrollRectContent);
-            Image boosterImage = boosterUI.GetComponentInChildren<Image>(); // Assuming image is a child
-            if(boosterImage == null) boosterImage = boosterUI.GetComponent<Image>(); // Fallback if image is on root
+            Image boosterImage = boosterUI.GetComponentInChildren<Image>(); 
+            if(boosterImage == null) boosterImage = boosterUI.GetComponent<Image>(); 
 
             string boosterName = booster.name;
 
@@ -713,21 +670,13 @@ public class ItemSelect : MonoBehaviour
             Button boosterButton = boosterUI.GetComponent<Button>();
             if (boosterButton != null)
             {
-                 // Remove all previous listeners to prevent multiple calls if UI is rebuilt
                 boosterButton.onClick.RemoveAllListeners();
                 boosterButton.onClick.AddListener(() =>
                 {
-                    ToastNotification.Show($"Booster: {boosterName}", "info"); // Changed to use standard toast
-                    // If you want a burn button here, it would call:
-                    // ShowBurnConfirmationFor(booster);
+                    ToastNotification.Show($"Booster: {boosterName}", "info");
                 });
             }
             else Debug.LogWarning("Booster UI Prefab missing Button component.");
-
-
-            // COMMENTED OUT: Burning every NFT when UI is created is likely not intended.
-            // Implement a separate button/mechanism for individual burns.
-            // StartCoroutine(BurnNFT(booster.id)); 
             
             if (boosterImage != null)
             {
@@ -736,11 +685,11 @@ public class ItemSelect : MonoBehaviour
                  Debug.LogWarning($"Booster UI for {boosterName} missing Image component.");
             }
         }
-        UpdateBoostMultiplier(); // Update text after UI is created/recreated
+        UpdateBoostMultiplier(); 
         SaveNFTData(); 
     }
 
-    IEnumerator LoadBoosterImage(BridgeUnityCNft booster, Image targetImage) // Changed type
+    IEnumerator LoadBoosterImage(BridgeUnityCNft booster, Image targetImage) 
     {
         string imageUrl = booster.imageUrl;
 
@@ -751,17 +700,12 @@ public class ItemSelect : MonoBehaviour
             yield break;
         }
 
-        // Simple check for common placeholder services if direct image URL is not working well
         if (imageUrl.Contains("placehold.co") || imageUrl.Contains("via.placeholder.com")) {
-             // These usually work fine, but good to be aware if issues arise
         }
 
 
         using (UnityEngine.Networking.UnityWebRequest imageRequest = UnityEngine.Networking.UnityWebRequestTexture.GetTexture(imageUrl))
         {
-            // Removed: DownloadHandlerTexture texHandler = new DownloadHandlerTexture(true); // This is default now
-            // Removed: imageRequest.downloadHandler = texHandler;
-
             yield return imageRequest.SendWebRequest();
 
             if (imageRequest.result == UnityEngine.Networking.UnityWebRequest.Result.Success)
@@ -775,11 +719,6 @@ public class ItemSelect : MonoBehaviour
                         Vector2.one * 0.5f
                     );
                     SetSpriteToTarget(targetImage, sprite);
-
-                    // Removed: if (!boosterSprites.ContainsKey(booster.name)) // boosterSprites dictionary seems unused elsewhere
-                    // Removed: {
-                    // Removed:     boosterSprites.Add(booster.name, sprite);
-                    // Removed: }
                 }
                 else
                 {
@@ -800,23 +739,26 @@ public class ItemSelect : MonoBehaviour
     {
         if (target == null) { Debug.LogError("SetSpriteToTarget: target Image is null."); return; }
         if (sprite == null) { Debug.LogError("SetSpriteToTarget: sprite is null."); return; }
-
-        // This logic seems overly complex if the Image component is directly on boosterUI
-        // or directly on a known child. Assuming 'targetImage' is the correct one.
         target.sprite = sprite;
     }
 
-    bool IsNFTUnlocked(string carName) // This checks against standard car NFTs (ownedCarNFTNames)
+    bool IsNFTUnlocked(string carName) 
     {
-        // This logic now depends on how ownedCarNFTNames is populated from HandleAssetsLoaded
-        // It currently stores names. Ensure names from NFT metadata match expected car names.
+        if (!assetsInitialized) {
+            Debug.LogWarning($"ItemSelect: IsNFTUnlocked called for '{carName}' but assets are not yet initialized. Returning false.");
+            return false;
+        }
+        
+        Debug.Log($"ItemSelect: Checking unlock status for car '{carName}'. Currently owned car NFT names: {string.Join(", ", ownedCarNFTNames)}");
         foreach (string nftName in ownedCarNFTNames)
         {
             if (nftName.Equals(carName, System.StringComparison.OrdinalIgnoreCase))
             {
+                Debug.Log($"ItemSelect: Car '{carName}' IS UNLOCKED because it matches owned NFT '{nftName}'.");
                 return true;
             }
         }
+        Debug.Log($"ItemSelect: Car '{carName}' IS LOCKED. No matching NFT found in ownedCarNFTNames.");
         return false;
     }
 
@@ -824,9 +766,11 @@ public class ItemSelect : MonoBehaviour
     {
         if (itemType == ItemType.Car && itemIcons.Length > id && id >= 0)
         {
-            string currentCarName = itemIcons[id].name; // Assumes sprite names match car names for locking
-            bool unlocked = assetsInitialized && IsNFTUnlocked(currentCarName);
+            string currentCarName = itemIcons[id].name; 
+            bool unlocked = IsNFTUnlocked(currentCarName); // IsNFTUnlocked now also checks assetsInitialized
             
+            Debug.Log($"ItemSelect: UpdateLockStatus for car '{currentCarName}' (ID: {id}). Assets Initialized: {assetsInitialized}. Unlocked: {unlocked}");
+
             if(lockIcon != null) lockIcon.SetActive(!unlocked);
 
             if(PracticeButton != null) PracticeButton.interactable = unlocked;
@@ -834,7 +778,7 @@ public class ItemSelect : MonoBehaviour
         }
         else if (itemType == ItemType.Level)
         {
-            if(lockIcon != null) lockIcon.SetActive(false); // Levels are not NFT locked in this script
+            if(lockIcon != null) lockIcon.SetActive(false); 
         }
     }
 
@@ -858,21 +802,21 @@ public class ItemSelect : MonoBehaviour
                 nextItemImage.sprite = itemIcons[id + 1];
                 prevItemImage.sprite = itemIcons[id - 1];
             }
-            else if (id == itemIcons.Length - 1 && id > 0) // Last item
+            else if (id == itemIcons.Length - 1 && id > 0) 
             {
                 nextItemImage.sprite = null;
                 nextItemImage.color = Color.clear;
                 prevItemImage.color = Color.white;
                 prevItemImage.sprite = itemIcons[id - 1];
             }
-            else if (id == 0 && itemIcons.Length > 1) // First item
+            else if (id == 0 && itemIcons.Length > 1) 
             {
                 prevItemImage.sprite = null;
                 prevItemImage.color = Color.clear;
                 nextItemImage.color = Color.white;
                 nextItemImage.sprite = itemIcons[id + 1];
             }
-             else if (itemIcons.Length <= 1) // Only one or zero items
+             else if (itemIcons.Length <= 1) 
             {
                 prevItemImage.sprite = null;
                 prevItemImage.color = Color.clear;
@@ -910,14 +854,14 @@ public class ItemSelect : MonoBehaviour
                 prevItemImage.sprite = itemIcons[id - 1];
                 if (id + 1 < itemIcons.Length) nextItemImage.sprite = itemIcons[id + 1]; else { nextItemImage.sprite = null; nextItemImage.color = Color.clear; }
             }
-            else if (id == 0 && itemIcons.Length > 1) // First item
+            else if (id == 0 && itemIcons.Length > 1) 
             {
                 prevItemImage.sprite = null;
                 prevItemImage.color = Color.clear;
                 nextItemImage.color = Color.white;
                 nextItemImage.sprite = itemIcons[id + 1];
             }
-            else if (itemIcons.Length <= 1) // Only one or zero items
+            else if (itemIcons.Length <= 1) 
             {
                  prevItemImage.sprite = null;
                  prevItemImage.color = Color.clear;
@@ -948,7 +892,6 @@ public class ItemSelect : MonoBehaviour
     {
         if (itemType == ItemType.Level)
         {
-            // Assuming PlayerPrefs "LevelX" stores unlock state (3 means unlocked)
             if (PlayerPrefs.GetInt("Level" + id.ToString(), 0) == 3)
             {
                 if(gameObject != null) gameObject.SetActive(false);
@@ -966,7 +909,7 @@ public class ItemSelect : MonoBehaviour
             if (itemIcons.Length > id && id >= 0)
             {
                 string carName = itemIcons[id].name;
-                bool unlocked = assetsInitialized && IsNFTUnlocked(carName);
+                bool unlocked = IsNFTUnlocked(carName);
 
                 if (unlocked)
                 {
@@ -979,22 +922,23 @@ public class ItemSelect : MonoBehaviour
                 else
                 {
                     if (audioSource != null && audioSource.enabled && errorClip != null) { audioSource.clip = errorClip; audioSource.Play(); }
+                     Debug.Log($"ItemSelect: Attempted to select locked car '{carName}'.");
                 }
             }
         }
     }
 
 
-    public void Buy() // This seems to be for non-NFT items (levels)
+    public void Buy() 
     {
         if (itemType == ItemType.Level)
         {
-            if (PlayerPrefs.GetInt("Level" + id.ToString(), 0) != 3) // Not already unlocked
+            if (PlayerPrefs.GetInt("Level" + id.ToString(), 0) != 3) 
             {
                 if (PlayerPrefs.GetInt("Coins", 0) >= itemsPrice[id])
                 {
                     PlayerPrefs.SetInt("Coins", PlayerPrefs.GetInt("Coins") - itemsPrice[id]);
-                    PlayerPrefs.SetInt("Level" + id.ToString(), 3); // Mark as unlocked
+                    PlayerPrefs.SetInt("Level" + id.ToString(), 3); 
                     if(lockIcon != null) lockIcon.SetActive(false);
                     if(coinsTXT != null) coinsTXT.text = PlayerPrefs.GetInt("Coins", 0).ToString();
                 }
@@ -1005,9 +949,10 @@ public class ItemSelect : MonoBehaviour
             }
         }
 
-        if (itemType == ItemType.Car) // Cars are NFT locked, not bought with coins in this logic
+        if (itemType == ItemType.Car) 
         {
             if (audioSource != null && audioSource.enabled && errorClip != null) { audioSource.clip = errorClip; audioSource.Play(); }
+             Debug.LogWarning("ItemSelect: Buy() called for ItemType.Car. Cars are NFT-locked, not bought with coins in this system.");
         }
     }
 
@@ -1019,7 +964,7 @@ public class ItemSelect : MonoBehaviour
     public float GetEffectiveNFTBoost(int totalRacesCompleted)
     {
         float totalBoost = 0f;
-        int nftCount = ownedBoosterNFTs.Count; // Use current count of owned boosters
+        int nftCount = ownedBoosterNFTs.Count; 
 
         if (nftCount >= 1 && totalRacesCompleted >= nftActivationRaces[1]) totalBoost += 10f;
         if (nftCount >= 2 && totalRacesCompleted >= nftActivationRaces[2]) totalBoost += 10f;
@@ -1030,6 +975,5 @@ public class ItemSelect : MonoBehaviour
         return totalBoost;
     }
 }
-
 
     
