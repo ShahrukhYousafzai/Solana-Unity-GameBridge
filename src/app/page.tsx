@@ -240,10 +240,11 @@ export default function HomePage() {
     }
   
     if (connected && currentPkString) {
-      console.log(`[Page RUW WalletEffect] Wallet IS connected (PK: ${currentPkString}).`);
+      console.log(`[Page RUW WalletEffect] Wallet IS connected (PK: ${currentPkString}). Sending OnWalletConnected and loading assets if needed.`);
       if (isLoaded) { 
         sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: currentPkString });
       }
+      // Directly trigger asset load from React side upon connection
       if (!isLoadingAssets && !isSubmittingTransactionRef.current) {
         console.log("[Page RUW WalletEffect] Wallet connected, triggering asset load directly from React.");
         debouncedLoadUserAssets();
@@ -252,10 +253,9 @@ export default function HomePage() {
       if (prevConnectedForUnityRef.current === true && !connected) {
         console.log(`[Page RUW WalletEffect] Wallet transitioned to disconnected. Sending OnWalletDisconnected. PrevConnected: ${prevConnectedForUnityRef.current}, NowConnected: ${connected}`);
         if (isLoaded) sendToUnityGame("GameBridgeManager", "OnWalletDisconnected", {});
-      } else if (prevConnectedForUnityRef.current === undefined && !connected && isLoaded) {
-        // console.log("[Page RUW WalletEffect] Initial check found wallet disconnected and Unity loaded. Sending OnWalletDisconnected.");
-        // This case might be too aggressive if Unity is just loading up.
-        // Better to rely on the transition from true to false for disconnect.
+      } else if (prevConnectedForUnityRef.current === undefined && !connected && isLoaded && isClientMounted) {
+         console.log("[Page RUW WalletEffect] Initial check: Wallet disconnected and Unity loaded. Sending OnWalletDisconnected.");
+         sendToUnityGame("GameBridgeManager", "OnWalletDisconnected", {});
       }
     }
     prevConnectedForUnityRef.current = connected;
@@ -264,12 +264,30 @@ export default function HomePage() {
   
 
   // Effect to reload page on wallet disconnect
-  const prevConnectedStateForRefreshRef = useRef<boolean>(walletHook.connected); 
+  const prevConnectedStateForRefreshRef = useRef<boolean>(walletHook.connected);
+  const disconnectReloadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     const { connected } = walletHookRef.current;
+
+    if (disconnectReloadTimeoutRef.current) {
+      clearTimeout(disconnectReloadTimeoutRef.current);
+      disconnectReloadTimeoutRef.current = null;
+    }
+
     if (prevConnectedStateForRefreshRef.current === true && !connected) {
-      console.log("[Page RUW DisconnectRefreshEffect] Wallet has transitioned from connected to disconnected. Reloading page.");
-      window.location.reload();
+      console.log("[Page RUW DisconnectRefreshEffect] Wallet has transitioned from connected to disconnected. Scheduling page reload.");
+      disconnectReloadTimeoutRef.current = setTimeout(() => {
+        console.log("[Page RUW DisconnectRefreshEffect] Executing scheduled reload due to persistent disconnection.");
+        window.location.reload();
+      }, 250); // Delay before reloading
+    } else if (prevConnectedStateForRefreshRef.current === false && connected) {
+      // Wallet just connected, or reconnected after a flicker
+      if (disconnectReloadTimeoutRef.current) {
+        console.log("[Page RUW DisconnectRefreshEffect] Wallet (re)connected. Cancelling any scheduled disconnect reload.");
+        clearTimeout(disconnectReloadTimeoutRef.current);
+        disconnectReloadTimeoutRef.current = null;
+      }
     }
     prevConnectedStateForRefreshRef.current = connected;
   }, [walletHook.connected]);
@@ -285,12 +303,7 @@ export default function HomePage() {
 
       if (previousModalVisibilityRef.current && !walletModal.visible) { 
           console.log(`[Page RUW ModalCloseEffect] Modal closed. Previously selected: ${previousSelectedWalletNameRef.current}, Current selected in hook: ${currentSelectedWalletName}. Connected: ${connected}, Connecting: ${connecting}`);
-          // Check if a wallet was actually selected from the modal
-          // The `wallet` in the hook updates slightly after the modal closes and a selection is made.
-          // We need to ensure we try to connect to the *actually chosen* wallet.
-          // The `select` function from useWallet updates the adapter, then we connect.
-          // However, `useWalletModal` handles the selection part. The `wallet` in `useWallet` should reflect the choice.
-
+          
           if (currentSelectedWalletName && !connected && !connecting) {
               console.log(`[Page RUW ModalCloseEffect] Modal closed, new wallet ${currentSelectedWalletName} appears selected. Attempting to connect.`);
               walletConnectAdapter?.().catch((error: any) => {
@@ -303,9 +316,9 @@ export default function HomePage() {
           }
       }
       previousModalVisibilityRef.current = walletModal.visible;
-      if (currentSelectedWalletName) { // Update ref if a wallet is selected
+      if (currentSelectedWalletName) { 
           previousSelectedWalletNameRef.current = currentSelectedWalletName;
-      } else if (!connected) { // Clear ref if disconnected and no wallet selected
+      } else if (!connected) { 
           previousSelectedWalletNameRef.current = null;
       }
   }, [walletModal.visible, walletHook.wallet, walletHook.connected, walletHook.connecting, walletHook.connect, toast, sendToUnityGame, isLoaded, walletHook.select]);
@@ -337,11 +350,9 @@ export default function HomePage() {
             console.log(`[Page RUW Global] ConnectWalletRequest: Wallet specified by Unity: ${walletNameFromUnity}. Selecting and attempting to connect.`);
             if (wallet?.adapter.name !== targetAdapter.name) {
               selectWalletFn(targetAdapter.name as WalletName);
-              // Give a brief moment for the selection to propagate in the hook
               await new Promise(resolve => setTimeout(resolve, 150)); 
             }
             
-            // Re-check the hook's state after selection attempt
             const newlySelectedWalletHook = walletHookRef.current; 
             if (newlySelectedWalletHook.wallet?.adapter.name === targetAdapter.name && !newlySelectedWalletHook.connected && !newlySelectedWalletHook.connecting) {
               newlySelectedWalletHook.connect?.().catch(error => {
@@ -369,7 +380,7 @@ export default function HomePage() {
           walletModal.setVisible(true);
           return;
         }
-      } else { // No specific wallet from Unity - user initiated a generic connect from Unity
+      } else { 
           const currentSelectedWalletAdapter = walletHookRef.current.wallet?.adapter;
           if (currentSelectedWalletAdapter && (currentSelectedWalletAdapter.readyState === WalletReadyState.Installed || currentSelectedWalletAdapter.readyState === WalletReadyState.Loadable) && !connected && !connecting) {
             console.log(`[Page RUW Global] ConnectWalletRequest: No specific wallet from Unity, but ${currentSelectedWalletAdapter.name} is selected and ready. Attempting to connect.`);
@@ -378,7 +389,7 @@ export default function HomePage() {
                 toast({ title: `Failed to connect ${currentSelectedWalletAdapter.name}`, description: error.message, variant: "destructive" });
                 if(isLoaded) sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: error.message, action: `connect_wallet_${currentSelectedWalletAdapter.name}` });
             });
-          } else { // No ready pre-selected wallet or already connected/connecting. Open modal.
+          } else { 
              console.log("[Page RUW Global] ConnectWalletRequest: No specific wallet from Unity, and no ready pre-selected wallet (or already handled). Clearing selection and opening wallet modal.");
              selectWalletFn(null); 
              walletModal.setVisible(true);
@@ -612,7 +623,7 @@ export default function HomePage() {
     addEventListener("OnGameBridgeManagerReady", handleGameBridgeManagerReady);
 
 
-    const handleUnityError = (error: Error) => { // Use correct Error type
+    const handleUnityError = (error: Error) => { 
       console.error("[Page RUW UnityErrorListener] Unity Engine Error:", error.message, error.name, error.stack);
       toast({
         title: "Unity Engine Error",
@@ -662,10 +673,6 @@ export default function HomePage() {
       addEventListener, removeEventListener, sendMessage, walletHook.connect, isClientMounted 
   ]);
 
-  // Effect to handle page reload when switching between connected wallets
-  // This logic has been intentionally removed as per user request in a previous step.
-  // If re-keying/restarting Unity without full page reload is desired for wallet switch,
-  // a different effect managing `unityInstanceKey` would be here.
 
   useEffect(() => {
     return () => {
