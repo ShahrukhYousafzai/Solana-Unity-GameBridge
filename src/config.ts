@@ -58,3 +58,10 @@ export const getRpcUrl = (network: SupportedSolanaNetwork, apiKey: string | unde
 export const SOL_BURN_ADDRESS = "1nc1nerator11111111111111111111111111111111";
 export const SOL_DECIMALS = 9;
 export const WITHDRAWAL_TAX_PERCENTAGE = 5; // 5%
+
+// Array of allowed wallet names.
+// Set via NEXT_PUBLIC_ALLOWED_WALLET_NAMES environment variable (comma-separated, e.g., "Phantom,Solflare").
+// If empty or not set, all supported wallets will be allowed.
+export const ALLOWED_WALLET_NAMES: string[] = process.env.NEXT_PUBLIC_ALLOWED_WALLET_NAMES
+  ? process.env.NEXT_PUBLIC_ALLOWED_WALLET_NAMES.split(',').map(name => name.trim()).filter(name => name.length > 0)
+  : [];
