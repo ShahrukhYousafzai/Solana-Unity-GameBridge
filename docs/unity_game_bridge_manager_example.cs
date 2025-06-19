@@ -65,6 +65,9 @@ public class GameBridgeManager : MonoBehaviour
     public event Action<string> OnWebGLContextLostEvent; // jsonData is usually empty {}
     public event Action<string> OnWebGLContextRestoredEvent; // jsonData is usually empty {}
 
+    // --- Cached Asset Data ---
+    private string _cachedAssetsJsonData = null;
+
 
     void Awake()
     {
@@ -91,6 +94,7 @@ public class GameBridgeManager : MonoBehaviour
     public void OnWalletDisconnected(string jsonData)
     {
         Debug.Log($"[GameBridgeManager C#] OnWalletDisconnected received: {jsonData}");
+        _cachedAssetsJsonData = null; // Clear cached assets on disconnect
         OnWalletDisconnectedEvent?.Invoke(jsonData);
         // Expected JSON: {} (empty object)
     }
@@ -161,7 +165,8 @@ public class GameBridgeManager : MonoBehaviour
     
     public void OnAssetsLoaded(string jsonData)
     {
-        Debug.Log($"[GameBridgeManager C#] OnAssetsLoaded received: {jsonData}");
+        Debug.Log($"[GameBridgeManager C#] OnAssetsLoaded received. Caching and invoking event. JSON: {jsonData}");
+        _cachedAssetsJsonData = jsonData; // Cache the data
         OnAssetsLoadedEvent?.Invoke(jsonData);
         // Expected JSON: {"nfts":[...],"cnfts":[...],"tokens":[...],"solBalance":...}
     }
@@ -176,6 +181,7 @@ public class GameBridgeManager : MonoBehaviour
     public void OnAssetsLoadFailed(string jsonData)
     {
         Debug.LogError($"[GameBridgeManager C#] OnAssetsLoadFailed received: {jsonData}");
+        _cachedAssetsJsonData = null; // Clear potentially stale cache
         OnAssetsLoadFailedEvent?.Invoke(jsonData);
         // Expected JSON: {"error":"Error message string"}
     }
@@ -183,6 +189,9 @@ public class GameBridgeManager : MonoBehaviour
     public void OnUserNFTsRequested(string jsonData)
     {
         Debug.Log($"[GameBridgeManager C#] OnUserNFTsRequested received: {jsonData}");
+        // This typically contains NFT data, so we might cache it if it's the primary source for ItemSelect
+        // For now, assuming OnAssetsLoaded is the main event for ItemSelect.
+        // If this event also needs to feed ItemSelect, caching logic similar to OnAssetsLoaded would be needed.
         OnUserNFTsRequestedEvent?.Invoke(jsonData);
         // Expected JSON: {"error":"optional_error_string", "nfts":[...],"cnfts":[...]}
     }
@@ -190,6 +199,7 @@ public class GameBridgeManager : MonoBehaviour
     public void OnUserTokensRequested(string jsonData)
     {
         Debug.Log($"[GameBridgeManager C#] OnUserTokensRequested received: {jsonData}");
+        // Similar to OnUserNFTsRequested, consider caching if ItemSelect consumes this directly.
         OnUserTokensRequestedEvent?.Invoke(jsonData);
         // Expected JSON: {"error":"optional_error_string", "tokens":[...],"solBalance":...}
     }
@@ -227,6 +237,7 @@ public class GameBridgeManager : MonoBehaviour
     public void OnNetworkChanged(string jsonData)
     {
         Debug.Log($"[GameBridgeManager C#] OnNetworkChanged received: {jsonData}");
+        _cachedAssetsJsonData = null; // Clear asset cache on network change
         OnNetworkChangedEvent?.Invoke(jsonData);
         // Expected JSON: {"network":"devnet"} // or "mainnet-beta", "testnet"
     }
@@ -268,39 +279,12 @@ public class GameBridgeManager : MonoBehaviour
         // Expected JSON: {}
     }
 
-    // --- Example data structures for JSON parsing (using Unity's JsonUtility) ---
-    /*
-    [System.Serializable]
-    public class WalletData { public string publicKey; }
-    [System.Serializable]
-    public class AssetLoadingData { public bool isLoading; }
-    [System.Serializable]
-    public class SolBalanceData { public float solBalance; }
-    // Add more structures as needed for other events...
-    
-    // Example subscription in another script:
-    // void Start() {
-    //     if (GameBridgeManager.Instance != null) {
-    //         GameBridgeManager.Instance.OnWalletConnectedEvent += HandleWalletConnected;
-    //     }
-    // }
-    // void OnDestroy() {
-    //     if (GameBridgeManager.Instance != null) {
-    //         GameBridgeManager.Instance.OnWalletConnectedEvent -= HandleWalletConnected;
-    //     }
-    // }
-    // private void HandleWalletConnected(string jsonData) {
-    //     Debug.Log("AnotherScript: Wallet Connected! Data: " + jsonData);
-    //     try {
-    //         WalletData data = JsonUtility.FromJson<WalletData>(jsonData);
-    //         if (data != null) {
-    //             Debug.Log("AnotherScript: Parsed publicKey: " + data.publicKey);
-    //         }
-    //     } catch (Exception e) {
-    //         Debug.LogError("AnotherScript: Failed to parse WalletConnected JSON: " + e.Message);
-    //     }
-    // }
-    */
+    // --- Public method to get cached asset data ---
+    public string GetCachedAssetsJson()
+    {
+        return _cachedAssetsJsonData;
+    }
+
 
     void Start()
     {
@@ -309,4 +293,3 @@ public class GameBridgeManager : MonoBehaviour
         // or ensure the web page is fully loaded if making calls immediately.
     }
 }
-

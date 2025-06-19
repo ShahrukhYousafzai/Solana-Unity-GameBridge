@@ -79,20 +79,6 @@ public class BridgeTransactionResultPayload
 }
 
 
-// Old Helius data structures - can be removed if direct Helius call is fully gone
-// but parts might be useful if the new BridgeUnityCNft structure needs to be expanded based on rawHeliusAsset details.
-// For now, commenting them out as the bridge sends simplified data.
-/*
-[System.Serializable]
-public class HeliusResponse { ... }
-[System.Serializable]
-public class HeliusResult { ... }
-[System.Serializable]
-public class HeliusItem { ... }
-// ... (rest of Helius specific classes) ...
-*/
-
-
 public class ItemSelect : MonoBehaviour
 {
     public ItemType itemType;
@@ -127,7 +113,7 @@ public class ItemSelect : MonoBehaviour
     private string ownerAddress = ""; // This will be set if found in PlayerPrefs, but asset loading is now reactive
     private const string carCollectionAddress = "qJhfDwLsjzjnjNw3Fz8ESji8zAWVWNP5AYDZXjxF1fd"; // Ensure this is correct
     private const string boosterCollectionAddress = "hUEKA85VywTT43c2s3Vd9Nsem1j1xTWbUPYLppY7Nzb"; // Ensure this is correct
-    private bool assetsInitialized = false; 
+    private bool initialAssetsProcessed = false; 
 
     // Booster NFT System
     [Header("Booster NFT System")]
@@ -168,9 +154,23 @@ public class ItemSelect : MonoBehaviour
     bool canAnim;
     bool animaState;
 
+    void Awake()
+    {
+        // Subscribe to GameBridgeManager events early
+        if (GameBridgeManager.Instance != null)
+        {
+            GameBridgeManager.Instance.OnAssetsLoadedEvent += HandleAssetsLoaded;
+            GameBridgeManager.Instance.OnTransactionSubmittedEvent += HandleAssetBurnSuccess; 
+            GameBridgeManager.Instance.OnTransactionErrorEvent += HandleAssetBurnError;
+        }
+        else
+        {
+            Debug.LogError("ItemSelect: GameBridgeManager.Instance is null in Awake. Asset and transaction events will not be handled initially.");
+        }
+    }
+
     void Start()
     {
-        // Get owner address if available, but primary asset loading relies on events
         if (PlayerPrefs.HasKey("WalletAddress"))
         {
             ownerAddress = PlayerPrefs.GetString("WalletAddress");
@@ -191,46 +191,51 @@ public class ItemSelect : MonoBehaviour
         if (itemIcons.Length > 0 && id < itemIcons.Length)
             currentItemImage.sprite = itemIcons[id];
         else if (itemIcons.Length > 0)
-            currentItemImage.sprite = itemIcons[0]; // Fallback to first icon
+            currentItemImage.sprite = itemIcons[0]; 
 
-        if (id != 0 && itemIcons.Length > 1)
-        {
-            PrevCar();
-            NextCar();
-        }
-        else if (itemIcons.Length > 1)
-        {
-            NextCar();
-            PrevCar();
-        }
+        if (id != 0 && itemIcons.Length > 1) { PrevCar(); NextCar(); }
+        else if (itemIcons.Length > 1) { NextCar(); PrevCar(); }
 
         canAnim = true;
-        UpdateLockStatus(); // Initial lock status based on no NFTs fetched (assetsInitialized is false)
-
-        if (itemsPrice.Length > id)
-            CurentValue.text = itemsPrice[id].ToString();
-        else if (itemsPrice.Length > 0)
-             CurentValue.text = itemsPrice[0].ToString();
-
-
-        if (itemType == ItemType.Car)
-        {
-            InitializeSeason();
-            // Asset initialization (StartCoroutine(InitializeAssets())) is removed.
-            // We now solely rely on OnAssetsLoadedEvent from GameBridgeManager.
-        }
         
-        // Subscribe to GameBridgeManager events
-        if (GameBridgeManager.Instance != null)
+        if (itemsPrice.Length > id) CurentValue.text = itemsPrice[id].ToString();
+        else if (itemsPrice.Length > 0) CurentValue.text = itemsPrice[0].ToString();
+
+        if (itemType == ItemType.Car) InitializeSeason();
+        
+        // Attempt to process cached data if GameBridgeManager is available and we haven't processed yet.
+        // This handles cases where ItemSelect might Start after assets are already loaded.
+        if (!initialAssetsProcessed && GameBridgeManager.Instance != null)
         {
-            GameBridgeManager.Instance.OnAssetsLoadedEvent += HandleAssetsLoaded;
-            GameBridgeManager.Instance.OnTransactionSubmittedEvent += HandleAssetBurnSuccess; 
-            GameBridgeManager.Instance.OnTransactionErrorEvent += HandleAssetBurnError;
+            string cachedData = GameBridgeManager.Instance.GetCachedAssetsJson();
+            if (!string.IsNullOrEmpty(cachedData))
+            {
+                Debug.Log("ItemSelect (Start): Processing cached asset data.");
+                HandleAssetsLoaded(cachedData);
+            }
         }
-        else
+        UpdateLockStatus(); // Initial lock status based on possibly no assets processed yet.
+    }
+
+    void OnEnable()
+    {
+        // This is crucial for when the ItemSelect GameObject is activated after assets have been loaded.
+        if (!initialAssetsProcessed && GameBridgeManager.Instance != null)
         {
-            Debug.LogError("ItemSelect: GameBridgeManager.Instance is null in Start. Asset and transaction events will not be handled.");
+            string cachedData = GameBridgeManager.Instance.GetCachedAssetsJson();
+            if (!string.IsNullOrEmpty(cachedData))
+            {
+                Debug.Log("ItemSelect (OnEnable): Processing cached asset data because initialAssetsProcessed is false.");
+                HandleAssetsLoaded(cachedData); // This will set initialAssetsProcessed to true.
+            } else {
+                 Debug.Log("ItemSelect (OnEnable): No cached asset data found or already processed.");
+            }
+        } else if (GameBridgeManager.Instance == null) {
+            Debug.LogWarning("ItemSelect (OnEnable): GameBridgeManager.Instance is null. Cannot fetch cached assets.");
         }
+        // Ensure UI reflects current state, even if re-enabled without new data.
+        UpdateLockStatus();
+        UpdateBoostMultiplier(); // Recalculate boost UI elements
     }
 
     void OnDestroy()
@@ -243,17 +248,15 @@ public class ItemSelect : MonoBehaviour
         }
     }
     
-    // Removed IEnumerator InitializeAssets() - MainMenuManager now triggers asset loading.
-
     void HandleAssetsLoaded(string jsonData)
     {
-        Debug.Log("ItemSelect: Received OnAssetsLoadedEvent. JSON: " + jsonData);
+        Debug.Log("ItemSelect (HandleAssetsLoaded): Received OnAssetsLoadedEvent. JSON: " + jsonData.Substring(0, Mathf.Min(jsonData.Length, 500)) + (jsonData.Length > 500 ? "..." : ""));
         ownedCarNFTNames.Clear();
         ownedBoosterNFTs.Clear();
 
-        if (string.IsNullOrEmpty(jsonData) || jsonData.Trim() == "{}") {
+        if (string.IsNullOrEmpty(jsonData) || jsonData.Trim() == "{}" || jsonData.Trim() == "null") {
             Debug.LogWarning("ItemSelect: HandleAssetsLoaded received empty or trivial JSON data. No assets to process.");
-            assetsInitialized = true; // Mark as initialized even if no assets, to allow normal game flow.
+            initialAssetsProcessed = true; 
             UpdateLockStatus();
             CreateBoosterUI(); 
             SaveNFTData();
@@ -308,6 +311,8 @@ public class ItemSelect : MonoBehaviour
                                      Debug.LogWarning($"ItemSelect: Owned compressed car NFT from collection {carCollectionAddress} has no name. ID: {cnft.id}");
                                  }
                              }
+                        } else {
+                            Debug.LogWarning($"ItemSelect: cNFT {cnft.name} (ID: {cnft.id}) has no collection info. Cannot categorize.");
                         }
                     }
                 }
@@ -320,11 +325,11 @@ public class ItemSelect : MonoBehaviour
         }
         catch (Exception e)
         {
-            Debug.LogError("ItemSelect: JSON Parse Error in HandleAssetsLoaded: " + e.Message + "\nAttempted to parse JSON: " + jsonData);
+            Debug.LogError("ItemSelect: JSON Parse Error in HandleAssetsLoaded: " + e.Message + "\nAttempted to parse JSON: " + jsonData.Substring(0, Mathf.Min(jsonData.Length, 500)) + (jsonData.Length > 500 ? "..." : ""));
         }
 
-        assetsInitialized = true;
-        UpdateLockStatus();
+        initialAssetsProcessed = true; // Mark that assets have been processed at least once.
+        UpdateLockStatus(); // Crucial: Update lock status after processing NFTs
         CreateBoosterUI(); 
         SaveNFTData(); 
     }
@@ -646,6 +651,10 @@ public class ItemSelect : MonoBehaviour
 
     void CreateBoosterUI()
     {
+        if (scrollRectContent == null) {
+            Debug.LogWarning("ItemSelect: scrollRectContent is not assigned. Cannot create booster UI.");
+            return;
+        }
         foreach (Transform child in scrollRectContent)
         {
             Destroy(child.gameObject);
@@ -653,6 +662,10 @@ public class ItemSelect : MonoBehaviour
 
         foreach (BridgeUnityCNft booster in ownedBoosterNFTs) 
         {
+            if (boosterNFTPrefab == null) {
+                Debug.LogError("ItemSelect: boosterNFTPrefab is not assigned. Cannot instantiate booster UI.");
+                continue;
+            }
             GameObject boosterUI = Instantiate(boosterNFTPrefab, scrollRectContent);
             Image boosterImage = boosterUI.GetComponentInChildren<Image>(); 
             if(boosterImage == null) boosterImage = boosterUI.GetComponent<Image>(); 
@@ -701,6 +714,7 @@ public class ItemSelect : MonoBehaviour
         }
 
         if (imageUrl.Contains("placehold.co") || imageUrl.Contains("via.placeholder.com")) {
+             Debug.Log($"ItemSelect: Using placeholder image URL directly: {imageUrl}");
         }
 
 
@@ -744,12 +758,12 @@ public class ItemSelect : MonoBehaviour
 
     bool IsNFTUnlocked(string carName) 
     {
-        if (!assetsInitialized) {
-            Debug.LogWarning($"ItemSelect: IsNFTUnlocked called for '{carName}' but assets are not yet initialized. Returning false.");
+        if (!initialAssetsProcessed) { // Use the new flag
+            Debug.LogWarning($"ItemSelect: IsNFTUnlocked called for '{carName}' but initial assets are not yet processed. Returning false.");
             return false;
         }
         
-        Debug.Log($"ItemSelect: Checking unlock status for car '{carName}'. Currently owned car NFT names: {string.Join(", ", ownedCarNFTNames)}");
+        Debug.Log($"ItemSelect: Checking unlock status for car '{carName}'. Owned car NFT names: {string.Join(", ", ownedCarNFTNames)}");
         foreach (string nftName in ownedCarNFTNames)
         {
             if (nftName.Equals(carName, System.StringComparison.OrdinalIgnoreCase))
@@ -767,9 +781,9 @@ public class ItemSelect : MonoBehaviour
         if (itemType == ItemType.Car && itemIcons.Length > id && id >= 0)
         {
             string currentCarName = itemIcons[id].name; 
-            bool unlocked = IsNFTUnlocked(currentCarName); // IsNFTUnlocked now also checks assetsInitialized
+            bool unlocked = IsNFTUnlocked(currentCarName);
             
-            Debug.Log($"ItemSelect: UpdateLockStatus for car '{currentCarName}' (ID: {id}). Assets Initialized: {assetsInitialized}. Unlocked: {unlocked}");
+            Debug.Log($"ItemSelect: UpdateLockStatus for car '{currentCarName}' (ID: {id}). Initial Assets Processed: {initialAssetsProcessed}. Unlocked: {unlocked}");
 
             if(lockIcon != null) lockIcon.SetActive(!unlocked);
 
@@ -975,5 +989,3 @@ public class ItemSelect : MonoBehaviour
         return totalBoost;
     }
 }
-
-    

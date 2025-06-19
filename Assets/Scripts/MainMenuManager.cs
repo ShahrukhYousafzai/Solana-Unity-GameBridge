@@ -75,15 +75,13 @@ public class MainMenuManager : MonoBehaviour
         {
             _publicKey = PlayerPrefs.GetString("WalletAddress");
             UserProfileNameText.text = FormatWalletAddress(_publicKey);
-            _isWalletConnected = true; // Mark as connected
-            if(connectButton) connectButton.gameObject.SetActive(false); // Hide connect button
-            // walletConnectPanel should be hidden by ShowGameMenu
-            StartCoroutine(ShowGameMenu(true)); // Pass true to indicate assets should be fetched
+            _isWalletConnected = true; 
+            if(connectButton) connectButton.gameObject.SetActive(false); 
+            StartCoroutine(ShowGameMenu(true)); 
         } else {
-            StartCoroutine(ShowGameMenu(false)); // Pass false if no wallet connected yet
+            StartCoroutine(ShowGameMenu(false)); 
         }
 
-        // Subscribe to wallet events from GameBridgeManager
         if (GameBridgeManager.Instance != null)
         {
             GameBridgeManager.Instance.OnWalletConnectedEvent += HandleWalletConnected;
@@ -138,7 +136,7 @@ public class MainMenuManager : MonoBehaviour
         else
         {
             Debug.LogError("WebWalletBridge.Instance is null. Cannot connect wallet.");
-            ToastNotification.Show("Wallet bridge not ready.", "error"); // Assuming ToastNotification exists
+            ToastNotification.Show("Wallet bridge not ready.", "error"); 
             return;
         }
         if(LoadingPanel) LoadingPanel.SetActive(true);
@@ -170,28 +168,28 @@ public class MainMenuManager : MonoBehaviour
 
         PlayFabClientAPI.LoginWithCustomID(new PlayFab.ClientModels.LoginWithCustomIDRequest
         {
-            CustomId = _publicKey, // Use the parsed public key
+            CustomId = _publicKey, 
             CreateAccount = true
         }, result =>
         {
             if(connectButton) connectButton.gameObject.SetActive(false);
             ToastNotification.Show($"Connected: {FormatWalletAddress(_publicKey)}", "success");
             PlayerPrefs.SetString("WalletAddress", _publicKey);
-            StartCoroutine(ShowGameMenu(true)); // Pass true to indicate assets should be fetched now
+            StartCoroutine(ShowGameMenu(true)); 
         }, error =>
         {
             Debug.LogError("MainMenuManager: PlayFab Login Error: " + error.GenerateErrorReport());
             ToastNotification.Show($"PlayFab Login Failed: {error.ErrorMessage}", "error");
-            Logout(); // Revert connection state if PlayFab login fails
+            Logout(); 
         });
     }
 
-    private void HandleWalletDisconnected(string jsonData) // jsonData might be empty or "{}", as per GameBridgeManager
+    private void HandleWalletDisconnected(string jsonData) 
     {
         Debug.Log("MainMenuManager: HandleWalletDisconnected. JSON Data: " + jsonData);
         _isWalletConnected = false;
         _publicKey = "";
-        Logout(); // Call full logout procedure
+        Logout(); 
         ToastNotification.Show("Wallet disconnected.", "info");
     }
 
@@ -200,15 +198,13 @@ public class MainMenuManager : MonoBehaviour
         Debug.LogError("MainMenuManager: HandleWalletError JSON Data: " + jsonData);
         string errorMessage = "An unknown wallet error occurred.";
         try {
-            // Assuming error JSON from JS might be like: {"error":"Error message string", "details":"...", "action":"..."}
-            // Or simpler, just a string if not JSON.
             if (jsonData.StartsWith("{") && jsonData.EndsWith("}")) {
                  WalletErrorData errorData = JsonUtility.FromJson<WalletErrorData>(jsonData);
                  if (errorData != null && !string.IsNullOrEmpty(errorData.error)) {
                      errorMessage = errorData.error;
                  }
             } else if (!string.IsNullOrEmpty(jsonData)) {
-                errorMessage = jsonData; // If it's not JSON, treat the whole string as the error.
+                errorMessage = jsonData; 
             }
         } catch (System.Exception e) {
              Debug.LogWarning($"MainMenuManager: Could not parse error JSON, using raw data. Error: {e.Message}. JSON was: {jsonData}");
@@ -217,7 +213,6 @@ public class MainMenuManager : MonoBehaviour
 
         ToastNotification.Show($"Wallet error: {errorMessage}", "error");
         if(LoadingPanel) LoadingPanel.SetActive(false);
-        // Potentially call Logout() or reset parts of the UI if the error is critical
     }
 
     private string FormatWalletAddress(string address)
@@ -231,11 +226,9 @@ public class MainMenuManager : MonoBehaviour
     {
         if (fetchAssets && _isWalletConnected && !string.IsNullOrEmpty(_publicKey))
         {
-            RequestUserAssetsFromBridge(); // Request assets if wallet is connected
+            RequestUserAssetsFromBridge(); 
         }
-        // Removed NFTsManager.Instance.StartCoroutine(NFTsManager.Instance.DetectNFTs());
-        // NFTsManager is not part of the provided code.
-
+        
         if (loadingSlider != null) {
             float duration = 3f;
             float elapsed = 0f;
@@ -252,7 +245,7 @@ public class MainMenuManager : MonoBehaviour
         yield return new WaitForSeconds(0.5f);
         if(LoadingPanel) LoadingPanel.SetActive(false);
         if(LobbyPanel) LobbyPanel.SetActive(true);
-        if(walletConnectPanel) walletConnectPanel.SetActive(false); // Hide wallet connect panel after successful connection and loading
+        if(walletConnectPanel) walletConnectPanel.SetActive(false); 
     }
 
     private void RequestUserAssetsFromBridge()
@@ -301,11 +294,3 @@ public class MainMenuManager : MonoBehaviour
         ToastNotification.Show("Logged out.", "info");
     }
 }
-
-// Assuming ItemSelect and ToastNotification are classes defined elsewhere in your Unity project.
-// Example structure for ItemSelect if not defined:
-// public class ItemSelect : MonoBehaviour { public Sprite[] itemIcons; }
-// Example structure for ToastNotification if not defined:
-// public static class ToastNotification { public static void Show(string message, string type) { Debug.Log($"Toast [{type}]: {message}"); } }
-
-    
