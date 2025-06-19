@@ -37,7 +37,6 @@ interface IframeWindow extends Window {
     SendMessage: (gameObjectName: string, methodName: string, message: string | number | undefined) => void;
     Quit?: () => Promise<void>;
   };
-  // We are no longer defining initUnityInIframe here
 }
 
 declare global {
@@ -471,7 +470,7 @@ export default function HomePage() {
 
 
   const handleIframeLoad = useCallback(() => {
-    console.log("[ParentPage] Iframe loaded (/unity.html). Attempting to locate unityInstance.");
+    console.log("[ParentPage] Iframe loaded (/index.html). Attempting to locate unityInstance.");
     setIsIframeLoading(false); // Iframe src has loaded
 
     const checkForUnityInstance = () => {
@@ -557,7 +556,7 @@ export default function HomePage() {
             </div>
              <p className="text-lg text-foreground mt-4">{isIframeLoading ? "Loading Host..." : (!isUnityInstanceReady ? "Loading Game..." : "Game Ready")}</p>
              <p className="text-sm text-muted-foreground mt-2">
-                Game is embedded from <code>/unity.html</code>. Ensure this file is your Unity build's <code>index.html</code> (renamed)
+                Game is embedded from <code>/index.html</code>. Ensure this file is your Unity build's <code>index.html</code>
                 and <code>/public/Build/</code> contains Unity's <code>Build</code> folder contents.
              </p>
              <p className="text-xs text-muted-foreground mt-1">If stuck, check browser console (F12) for errors in both parent and iframe (right-click game > Inspect).</p>
@@ -565,7 +564,7 @@ export default function HomePage() {
         )}
         <iframe
             ref={iframeRef}
-            src="/unity.html" // Points to the renamed Unity index.html in /public
+            src="/index.html" // Points to Unity's index.html in /public
             className={`w-full h-full border-0 ${(isIframeLoading || !isUnityInstanceReady) ? 'opacity-0' : 'opacity-100'} transition-opacity duration-500`}
             title="Unity Game"
             onLoad={handleIframeLoad}
