@@ -13,55 +13,36 @@ import { SolflareWalletAdapter } from "@solana/wallet-adapter-solflare";
 import { BackpackWalletAdapter } from "@solana/wallet-adapter-backpack";
 import type { Adapter } from "@solana/wallet-adapter-base";
 import { useNetwork } from "./NetworkContext";
-import { ALLOWED_WALLET_NAMES } from "@/config";
+// ALLOWED_WALLET_NAMES import is removed as the feature is disabled.
 
-console.log("[WalletContextProvider] Top Level: ALLOWED_WALLET_NAMES from config:", ALLOWED_WALLET_NAMES);
+console.log("[WalletContextProvider] Initializing base wallet adapters.");
 
 export const WalletContextProvider: FC<{ children: ReactNode }> = ({
   children,
 }) => {
   const { currentNetwork, rpcUrl } = useNetwork();
 
+  // Always initialize Phantom, Solflare, and Backpack adapters.
+  // The filtering logic based on ALLOWED_WALLET_NAMES has been removed.
   const walletsToInitialize = useMemo(() => {
-    console.log("[WalletContextProvider useMemo] Re-evaluating wallets. currentNetwork:", currentNetwork, "ALLOWED_WALLET_NAMES:", ALLOWED_WALLET_NAMES);
-
+    console.log("[WalletContextProvider useMemo] Initializing standard set of wallets for network:", currentNetwork);
     const baseAdapters: Adapter[] = [
       new PhantomWalletAdapter(),
-      new SolflareWalletAdapter({ network: currentNetwork }), // currentNetwork is string, compatible with WalletAdapterNetwork
+      new SolflareWalletAdapter({ network: currentNetwork }),
       new BackpackWalletAdapter(),
     ];
-    console.log("[WalletContextProvider useMemo] Base adapters instantiated:", baseAdapters.map(a => a.name));
-
-    if (ALLOWED_WALLET_NAMES && ALLOWED_WALLET_NAMES.length > 0) {
-      console.log("[WalletContextProvider useMemo] Filtering based on ALLOWED_WALLET_NAMES:", ALLOWED_WALLET_NAMES);
-      const filtered = baseAdapters.filter(adapter => {
-        const isAllowed = ALLOWED_WALLET_NAMES.includes(adapter.name);
-        console.log(`[WalletContextProvider useMemo] Checking adapter: ${adapter.name}. Is allowed: ${isAllowed}`);
-        return isAllowed;
-      });
-      console.log("[WalletContextProvider useMemo] Final filtered adapters to initialize:", filtered.map(w => w.name));
-      return filtered;
-    }
-
-    console.log("[WalletContextProvider useMemo] No specific wallets filtered by ALLOWED_WALLET_NAMES. Initializing all base adapters.");
+    console.log("[WalletContextProvider useMemo] Base adapters to initialize:", baseAdapters.map(a => a.name));
     return baseAdapters;
-  }, [currentNetwork]); // ALLOWED_WALLET_NAMES is from config, effectively static post-build, but currentNetwork can change.
+  }, [currentNetwork]);
 
+  // When no specific filtering is active, pass 'undefined' to standardWallets
+  // to let WalletProvider use its default standard wallet discovery behavior.
   const standardWalletsToPass = useMemo(() => {
-    // If ALLOWED_WALLET_NAMES is active, we pass an empty array to `standardWallets`
-    // to signal to WalletProvider that it should *not* use its default behavior of
-    // discovering standard wallets. The `wallets` prop will be our exclusively filtered list.
-    if (ALLOWED_WALLET_NAMES && ALLOWED_WALLET_NAMES.length > 0) {
-      console.log("[WalletContextProvider useMemo] ALLOWED_WALLET_NAMES is active. Passing empty array to standardWallets prop.");
-      return [];
-    }
-    // If no filtering, let WalletProvider use its default standard wallet discovery.
-    // Passing `undefined` achieves this.
-    console.log("[WalletContextProvider useMemo] ALLOWED_WALLET_NAMES is not active. Letting WalletProvider use default standard wallet discovery.");
+    console.log("[WalletContextProvider useMemo] Letting WalletProvider use default standard wallet discovery.");
     return undefined;
-  }, []); // ALLOWED_WALLET_NAMES is effectively static
+  }, []);
 
-  const providerKey = `${rpcUrl}-${currentNetwork}-${ALLOWED_WALLET_NAMES.join('-')}`;
+  const providerKey = `${rpcUrl}-${currentNetwork}-allWallets`;
 
   return (
     <ConnectionProvider endpoint={rpcUrl} key={`${providerKey}-conn`}>
@@ -76,3 +57,4 @@ export const WalletContextProvider: FC<{ children: ReactNode }> = ({
     </ConnectionProvider>
   );
 };
+
