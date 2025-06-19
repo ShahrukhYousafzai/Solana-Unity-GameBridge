@@ -227,50 +227,49 @@ export default function HomePage() {
 
   const debouncedLoadUserAssets = useMemo(() => debounce(loadUserAssetsInternal, 500), [loadUserAssetsInternal]);
 
-  // Effect for wallet connection/disconnection side effects to Unity
   const prevConnectedForUnityRef = useRef<boolean | undefined>(undefined);
+  const prevPublicKeyForUnityRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     const { connected, publicKey } = walletHookRef.current;
-    console.log(`[Page RUW WalletEffect] State - Connected: ${connected}, PK: ${publicKey?.toBase58()}, Unity Loaded: ${isLoaded}, PrevConnected: ${prevConnectedForUnityRef.current}`);
+    const currentPkString = publicKey?.toBase58();
+    console.log(`[Page RUW WalletEffect] State - Connected: ${connected}, PK: ${currentPkString}, Unity Loaded: ${isLoaded}, PrevConnected: ${prevConnectedForUnityRef.current}, PrevPK: ${prevPublicKeyForUnityRef.current}`);
   
     if (!isLoaded) {
-      console.log("[Page RUW WalletEffect] Unity not ready, skipping messages for this render.");
+      console.log("[Page RUW WalletEffect] Unity not ready (isLoaded is false), skipping asset load/wallet status update to Unity for this render.");
       return;
     }
   
-    if (connected && publicKey) {
-      if (prevConnectedForUnityRef.current !== true || 
-          (prevConnectedForUnityRef.current === true && walletHookRef.current.publicKey?.toBase58() !== publicKey.toBase58())) {
-        console.log("[Page RUW WalletEffect] Wallet connected or changed. Sending OnWalletConnected to Unity & loading assets.");
-        sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: publicKey.toBase58() });
+    if (connected && currentPkString) {
+      if (prevConnectedForUnityRef.current !== true || prevPublicKeyForUnityRef.current !== currentPkString) {
+        console.log("[Page RUW WalletEffect] Wallet connected AND Unity ready. Sending OnWalletConnected to Unity and loading assets.");
+        sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: currentPkString });
         debouncedLoadUserAssets();
       }
     } else { 
       if (prevConnectedForUnityRef.current === true || (prevConnectedForUnityRef.current === undefined && !connected)) {
-        console.log(`[Page RUW WalletEffect] Wallet disconnected or initial not-connected state. Sending OnWalletDisconnected to Unity. PrevConnected: ${prevConnectedForUnityRef.current}`);
+        console.log(`[Page RUW WalletEffect] Wallet disconnected or initial not-connected state (and Unity ready). Sending OnWalletDisconnected to Unity. PrevConnected: ${prevConnectedForUnityRef.current}`);
         sendToUnityGame("GameBridgeManager", "OnWalletDisconnected", {});
         resetLocalAssets();
       }
     }
     prevConnectedForUnityRef.current = connected;
+    prevPublicKeyForUnityRef.current = currentPkString;
   }, [walletHookRef.current.connected, walletHookRef.current.publicKey, isLoaded, sendToUnityGame, debouncedLoadUserAssets, resetLocalAssets]);
 
 
-  // Effect for page refresh on manual disconnect
-  const { connected: isWalletCurrentlyConnected } = useWallet(); 
-  const prevConnectedStateForRefreshRef = useRef<boolean>(isWalletCurrentlyConnected);
+  const { connected: isWalletCurrentlyConnectedForRefresh } = useWallet(); 
+  const prevConnectedStateForRefreshRef = useRef<boolean>(isWalletCurrentlyConnectedForRefresh);
 
   useEffect(() => {
-    if (prevConnectedStateForRefreshRef.current === true && !isWalletCurrentlyConnected) {
+    if (prevConnectedStateForRefreshRef.current === true && !isWalletCurrentlyConnectedForRefresh) {
       console.log("[Page RUW RefreshEffect] Wallet has transitioned from connected to disconnected. Reloading page.");
       window.location.reload();
     }
-    prevConnectedStateForRefreshRef.current = isWalletCurrentlyConnected;
-  }, [isWalletCurrentlyConnected]);
+    prevConnectedStateForRefreshRef.current = isWalletCurrentlyConnectedForRefresh;
+  }, [isWalletCurrentlyConnectedForRefresh]);
 
 
-  // Main effect for setting up global bridge handlers and Unity event listeners
   useEffect(() => {
     console.log("[Page RUW BridgeEffect] Setting up global handlers and react-unity-webgl event listeners. RUW isLoaded:", isLoaded);
     
@@ -305,8 +304,8 @@ export default function HomePage() {
     };
 
     window.handleConnectWalletRequest = async (walletNameFromUnity?: string) => {
-      console.log("[Page RUW Global] window.handleConnectWalletRequest CALLED", { walletNameFromUnity, currentAdapter: walletHookRef.current.wallet?.adapter.name, connected: walletHookRef.current.connected, connecting: walletHookRef.current.connecting });
       if (!isLoaded) { console.warn("[Page RUW Global] handleConnectWalletRequest: Unity not ready."); return; }
+      console.log("[Page RUW Global] window.handleConnectWalletRequest CALLED", { walletNameFromUnity, currentAdapter: walletHookRef.current.wallet?.adapter.name, connected: walletHookRef.current.connected, connecting: walletHookRef.current.connecting });
     
       if (walletHookRef.current.connecting) {
         console.warn("[Page RUW Global] Wallet connection already in progress. Ignoring request.");
@@ -315,10 +314,8 @@ export default function HomePage() {
         return;
       }
     
-      // If already connected and the request is not for a specific different wallet, just confirm to Unity.
       if (walletHookRef.current.connected && walletHookRef.current.publicKey && (!walletNameFromUnity || walletNameFromUnity === walletHookRef.current.wallet?.adapter.name)) {
         console.log("[Page RUW Global] Already connected. PK:", walletHookRef.current.publicKey.toBase58());
-        // The dedicated Unity WalletEffect will handle sending OnWalletConnected to Unity.
         return;
       }
     
@@ -338,11 +335,8 @@ export default function HomePage() {
         if (walletHookRef.current.wallet?.adapter.name !== targetWalletNameStr) {
           try {
             console.log(`[Page RUW Global] Selecting wallet adapter: ${targetWalletNameStr}`);
-            selectWallet(targetWalletNameStr); // Use selectWallet from useWallet()
-            // Wait for the adapter to change. This happens asynchronously.
-            // A short delay might be needed, or rely on useEffect to react to wallet change.
-            // For now, we'll proceed assuming selectWallet updates the context quickly.
-            await new Promise(resolve => setTimeout(resolve, 100)); // Small delay to allow adapter switch
+            selectWallet(targetWalletNameStr);
+            await new Promise(resolve => setTimeout(resolve, 100)); 
           } catch (e: any) {
             console.error(`[Page RUW Global] Error selecting wallet ${targetWalletNameStr}:`, e);
             toast({ title: "Wallet Selection Error", description: e.message, variant: "destructive" });
@@ -384,7 +378,6 @@ export default function HomePage() {
       try {
         console.log(`[Page RUW Global] Calling connectWithTimeout for adapter: ${adapterToConnect.name}`);
         await connectWithTimeout(adapterToConnect);
-        // The dedicated Unity WalletEffect will handle sending OnWalletConnected to Unity.
         if (walletHookRef.current.connected && walletHookRef.current.publicKey) {
           console.log(`[Page RUW Global] Successfully initiated connection to ${adapterToConnect.name}. Wallet state will update and trigger effect.`);
         } else {
@@ -416,7 +409,6 @@ export default function HomePage() {
       if (!isLoaded) { console.warn("[Page RUW Global] handleDisconnectWalletRequest: Unity not ready."); return; }
       try {
         await walletHookRef.current.disconnect();
-        // Page refresh will be handled by the dedicated useEffect for `connected` state changes.
       } catch (error: any) {
         if(isLoaded) sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: error.message, action: "disconnect_wallet" });
         toast({ title: "Wallet Disconnect Error", description: error.message, variant: "destructive" });
@@ -643,10 +635,9 @@ export default function HomePage() {
   }, [
       isLoaded, connection, walletModal, availableWallets, selectWallet, setCurrentNetwork, 
       sendToUnityGame, toast, fetchSolBalanceInternal, debouncedLoadUserAssets, 
-      addEventListener, removeEventListener 
+      addEventListener, removeEventListener, sendMessage 
   ]);
 
-  // Effect for detaching Unity instance on component unmount
   useEffect(() => {
     return () => {
       if (isLoaded && detachAndUnload) {
@@ -665,8 +656,26 @@ export default function HomePage() {
     <div className="flex flex-col h-screen max-h-screen overflow-hidden bg-background text-foreground">
       <header className="sticky top-0 z-[100] w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 h-16 shrink-0">
         <div className="container flex h-full items-center justify-between px-4 md:px-6 mx-auto">
-          <NetworkSwitcher />
-          <ConnectWalletButton />
+          <div className="flex-1 flex justify-start">
+            <NetworkSwitcher />
+          </div>
+          <div className="flex-1 flex justify-center">
+            {isClientMounted && (
+              <Image
+                src={`/Build/${gameBaseNameOrDefault}_Logo.png`}
+                alt={`${gameProductNameOrDefault} Logo`}
+                width={40} 
+                height={40} 
+                className="object-contain"
+                data-ai-hint="game logo"
+                priority
+                onError={(e) => { (e.target as HTMLImageElement).src = 'https://placehold.co/40x40.png'; (e.target as HTMLImageElement).alt = 'Game Logo Placeholder'; }}
+              />
+            )}
+          </div>
+          <div className="flex-1 flex justify-end">
+            <ConnectWalletButton />
+          </div>
         </div>
       </header>
 
@@ -713,7 +722,7 @@ export default function HomePage() {
                 unityProvider={unityProvider}
                 className={`w-full h-full block ${!isLoaded ? 'opacity-0' : 'opacity-100'} transition-opacity duration-500`}
                 style={{ background: 'transparent' }}
-                devicePixelRatio={currentDevicePixelRatio} // This will be undefined on server, set on client
+                devicePixelRatio={currentDevicePixelRatio} 
                 suppressHydrationWarning 
             />
         )}
@@ -721,5 +730,4 @@ export default function HomePage() {
     </div>
   );
 }
-
 
