@@ -39,7 +39,6 @@ const ConnectWalletButton = dynamic(
   }
 );
 
-// Declare global functions for jslib to call
 declare global {
   interface Window {
     handleConnectWalletRequest?: (walletName?: string) => void;
@@ -65,7 +64,6 @@ declare global {
   }
 }
 
-// Debounce function
 function debounce<F extends (...args: any[]) => Promise<any>>(func: F, waitFor: number) {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   return (...args: Parameters<F>): Promise<ReturnType<F>> => {
@@ -85,15 +83,15 @@ function debounce<F extends (...args: any[]) => Promise<any>>(func: F, waitFor: 
 export default function HomePage() {
   const { connection } = useConnection();
   const walletHook = useWallet();
-  const { publicKey, connected, connect: connectWalletAdapter, disconnect: disconnectWalletAdapter, select, wallets: availableWallets } = walletHook;
+  const { publicKey, wallets: availableWallets } = walletHook; // Keep only stable parts here for deps
   const { toast } = useToast();
   const { currentNetwork, setCurrentNetwork, rpcUrl } = useNetwork();
   const walletModal = useWalletModal();
-  const walletHookRef = useRef(walletHook);
+  const walletHookRef = useRef(walletHook); // Ref to access full, changing walletHook
 
   const gameBaseNameOrDefault = UNITY_GAME_BUILD_BASE_NAME || "MyGame";
 
-  const { unityProvider, isLoaded, loadingProgression, sendMessage, addEventListener, removeEventListener,UNSAFE__detachAndUnloadImmediate: detachAndUnload } = useUnityContext({
+  const { unityProvider, isLoaded, loadingProgression, sendMessage, addEventListener, removeEventListener, UNSAFE__detachAndUnloadImmediate: detachAndUnload } = useUnityContext({
     loaderUrl: `/Build/${gameBaseNameOrDefault}.loader.js`,
     dataUrl: `/Build/${gameBaseNameOrDefault}.data`,
     frameworkUrl: `/Build/${gameBaseNameOrDefault}.framework.js`,
@@ -112,8 +110,6 @@ export default function HomePage() {
   const [currentDevicePixelRatio, setCurrentDevicePixelRatio] = useState<number | undefined>(undefined);
   const [isClientMounted, setIsClientMounted] = useState(false);
 
-
-  // Refs for values that might be accessed in callbacks/effects
   const nftsRef = useRef(nfts);
   const cnftsRef = useRef(cnfts);
   const tokensRef = useRef(tokens);
@@ -154,10 +150,9 @@ export default function HomePage() {
   }, [isLoaded, sendMessage]);
 
 
-  const fetchSolBalanceInternal = useCallback(async (
-    currentPk: PublicKey | null,
-    currentConn: Connection
-  ): Promise<number> => {
+  const fetchSolBalanceInternal = useCallback(async (): Promise<number> => {
+    const currentPk = walletHookRef.current.publicKey;
+    const currentConn = connection; // connection from useConnection() is stable
     if (currentPk && currentConn) {
       try {
         const balance = await currentConn.getBalance(currentPk);
@@ -173,14 +168,14 @@ export default function HomePage() {
       }
     }
     return 0;
-  }, [sendToUnityGame, toast]);
+  }, [sendToUnityGame, toast, connection]); // connection is stable
 
-  const loadUserAssetsInternal = useCallback(async (
-    currentPk: PublicKey | null,
-    currentRpcFromRef: string,
-    currentConn: Connection,
-  ) => {
-    if (!currentPk || !currentRpcFromRef || !currentConn || !walletHookRef.current.publicKey) {
+  const loadUserAssetsInternal = useCallback(async () => {
+    const currentPk = walletHookRef.current.publicKey;
+    const currentRpc = rpcUrlRef.current; // Use ref for RPC URL
+    const currentConn = connection; // connection from useConnection() is stable
+
+    if (!currentPk || !currentRpc || !currentConn ) {
       setNfts([]); setCnfts([]); setTokens([]); _setSolBalance(0);
       sendToUnityGame("GameBridgeManager", "OnAssetsLoaded", { nfts: [], cnfts: [], tokens: [], solBalance: 0 });
       return;
@@ -188,10 +183,10 @@ export default function HomePage() {
     setIsLoadingAssets(true);
     sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: true });
     try {
-      const validWalletContext = walletHookRef.current.publicKey ? walletHookRef.current : walletHook;
+      // Use walletHookRef.current to ensure the latest wallet state is used by fetchAssetsForOwner
       const [fetchedSol, { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens, heliusWarning }] = await Promise.all([
-        fetchSolBalanceInternal(currentPk, currentConn),
-        fetchAssetsForOwner(currentPk.toBase58(), currentRpcFromRef, currentConn, validWalletContext)
+        fetchSolBalanceInternal(), // Now uses refs internally
+        fetchAssetsForOwner(currentPk.toBase58(), currentRpc, currentConn, walletHookRef.current)
       ]);
 
       if (heliusWarning) {
@@ -201,6 +196,7 @@ export default function HomePage() {
       }
 
       setNfts(fetchedNfts); setCnfts(fetchedCnfts); setTokens(fetchedTokens);
+      // fetchSolBalanceInternal already updates _solBalance and sends to Unity
       sendToUnityGame("GameBridgeManager", "OnAssetsLoaded", { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens, solBalance: fetchedSol });
 
       if (!heliusWarning) {
@@ -215,7 +211,7 @@ export default function HomePage() {
       setIsLoadingAssets(false);
       sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false });
     }
-  }, [sendToUnityGame, toast, fetchSolBalanceInternal, walletHook]); // walletHook as dep for validWalletContext fallback
+  }, [sendToUnityGame, toast, fetchSolBalanceInternal, connection]); // connection is stable
 
   const debouncedLoadUserAssets = useMemo(() => debounce(loadUserAssetsInternal, 500), [loadUserAssetsInternal]);
 
@@ -224,18 +220,16 @@ export default function HomePage() {
       console.log("[Page RUW WalletEffect] Unity not ready (isLoaded is false), skipping asset load/wallet status update to Unity.");
       return;
     }
-    if (walletHookRef.current.connected && walletHookRef.current.publicKey && rpcUrlRef.current && connection) {
+    if (walletHookRef.current.connected && walletHookRef.current.publicKey && connection) {
       console.log("[Page RUW WalletEffect] Wallet connected AND Unity ready. Sending OnWalletConnected to Unity and loading assets.");
       sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: walletHookRef.current.publicKey.toBase58() });
-      debouncedLoadUserAssets(walletHookRef.current.publicKey, rpcUrlRef.current, connection);
-    } else if (!walletHookRef.current.connected && isLoaded) {
+      debouncedLoadUserAssets();
+    } else if (!walletHookRef.current.connected && isLoaded) { // Ensure isLoaded is true before sending disconnect
       console.log("[Page RUW WalletEffect] Wallet disconnected AND Unity ready. Sending OnWalletDisconnected to Unity.");
       sendToUnityGame("GameBridgeManager", "OnWalletDisconnected", {});
       setNfts([]); setCnfts([]); setTokens([]); _setSolBalance(0);
     }
-  // Main dependencies: isLoaded, connection. WalletHookRef.current.connected/publicKey are read via ref.
-  // RpcUrlRef.current also read via ref. DebouncedLoadUserAssets has its own deps.
-  }, [isLoaded, connection, sendToUnityGame, debouncedLoadUserAssets]);
+  }, [isLoaded, walletHookRef.current.connected, walletHookRef.current.publicKey, connection, sendToUnityGame, debouncedLoadUserAssets]);
 
 
   useEffect(() => {
@@ -243,8 +237,6 @@ export default function HomePage() {
 
     if (!isLoaded) {
       console.log("[Page RUW BridgeEffect] RUW isLoaded is false. Global handlers will be defined once Unity is ready.");
-      // Do not define handlers yet if Unity isn't ready, as they depend on walletHookRef which might also not be fully stable
-      // or they might be called prematurely.
     } else {
         console.log("[Page RUW BridgeEffect] RUW isLoaded is true. Signaling 'OnUnityReady' to GameBridgeManager C# (which means JS bridge is up).");
         sendToUnityGame("GameBridgeManager", "OnUnityReady", {});
@@ -253,7 +245,8 @@ export default function HomePage() {
           console.log(`[Page RUW connectWithTimeout] Attempting to connect with adapter: ${adapter.name}, timeout: ${timeoutMs}ms`);
           let timeoutHandle: NodeJS.Timeout;
       
-          const connectionPromise = walletHookRef.current.connect();
+          // walletHookRef.current.connect is the function from useWallet()
+          const connectionPromise = walletHookRef.current.connect(); 
       
           const timeoutPromise = new Promise<void>((_, reject) => {
             timeoutHandle = setTimeout(() => {
@@ -264,19 +257,19 @@ export default function HomePage() {
       
           try {
             await Promise.race([connectionPromise, timeoutPromise]);
-            clearTimeout(timeoutHandle!); // Clear timeout if connection succeeds or fails fast
+            clearTimeout(timeoutHandle!); 
             console.log(`[Page RUW connectWithTimeout] Connection attempt for ${adapter.name} completed (either success or quick failure).`);
           } catch (error) {
-            clearTimeout(timeoutHandle!); // Clear timeout if connection promise itself rejects
+            clearTimeout(timeoutHandle!); 
             console.error(`[Page RUW connectWithTimeout] Error during connection attempt for ${adapter.name}:`, error);
-            throw error; // Re-throw the error (either from timeout or from connect())
+            throw error; 
           }
         };
 
         window.handleConnectWalletRequest = async (walletNameFromUnity?: string) => {
           console.log("[Page RUW Global] window.handleConnectWalletRequest CALLED.", 
-            "walletHook.connected:", walletHookRef.current.connected, 
-            "walletHook.wallet:", walletHookRef.current.wallet?.adapter.name,
+            "walletHookRef.current.connected:", walletHookRef.current.connected, 
+            "walletHookRef.current.wallet:", walletHookRef.current.wallet?.adapter.name,
             "Wallet name from Unity:", walletNameFromUnity
           );
     
@@ -289,21 +282,20 @@ export default function HomePage() {
           let targetWalletName: WalletName | undefined = walletNameFromUnity as WalletName | undefined;
           
           if (targetWalletName) {
-            const selectedAdapter = availableWallets.find(w => w.adapter.name === targetWalletName)?.adapter;
-            if (selectedAdapter) {
+            const selectedAdapterInstance = availableWallets.find(w => w.adapter.name === targetWalletName)?.adapter;
+            if (selectedAdapterInstance) {
               console.log(`[Page RUW Global] Wallet specified by Unity: ${targetWalletName}. Current adapter in hook: ${walletHookRef.current.wallet?.adapter.name}. Selecting if different.`);
               if (walletHookRef.current.wallet?.adapter.name !== targetWalletName) {
                 try {
                   console.log(`[Page RUW Global] Attempting to select wallet: ${targetWalletName}`);
+                  // select is from walletHookRef.current
                   await walletHookRef.current.select(targetWalletName);
-                  // Re-check after select, as it might update walletHookRef.current.wallet asynchronously
-                  // However, connect() below will use the selected wallet implicitly.
                   console.log(`[Page RUW Global] Wallet ${targetWalletName} selected. Proceeding to connect.`);
                 } catch (e: any) {
                   console.error(`[Page RUW Global] Error selecting wallet ${targetWalletName}:`, e);
                   sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: `Failed to select ${targetWalletName}: ${e.message}`, action: "select_wallet_on_connect_request" });
                   toast({ title: "Wallet Selection Error", description: e.message, variant: "destructive" });
-                  walletModal.setVisible(true); // Fallback to modal
+                  walletModal.setVisible(true); 
                   return;
                 }
               }
@@ -336,16 +328,12 @@ export default function HomePage() {
     
           try {
             console.log(`[Page RUW Global] Calling connectWithTimeout for adapter: ${adapter.name}`);
-            await connectWithTimeout(adapter); // Uses walletHookRef.current.connect() internally
-            // OnWalletConnected will be sent by the main wallet effect if successful
+            await connectWithTimeout(adapter); 
             console.log(`[Page RUW Global] connectWithTimeout completed for ${adapter.name}. Current status: connected=${walletHookRef.current.connected}`);
             if (walletHookRef.current.connected && walletHookRef.current.publicKey) {
-               // This is a bit redundant if the main effect handles it, but good for immediate feedback
                sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: walletHookRef.current.publicKey.toBase58() });
             } else if (!walletHookRef.current.connecting) {
-              // If not connecting and not connected, it might have been a silent failure or user cancellation
               console.warn(`[Page RUW Global] Wallet ${adapter.name} is not connected after attempt and not in connecting state.`);
-              // Potentially send OnWalletConnectionError if it's not a user cancellation
             }
           } catch (error: any) {
             console.error(`[Page RUW Global] Error during connectWithTimeout for ${adapter.name}:`, error);
@@ -353,7 +341,7 @@ export default function HomePage() {
             toast({ title: "Wallet Connection Error", description: `${error.name || 'Error'}: ${error.message}`, variant: "destructive" });
           }
         };
-        console.log("[Page RUW BridgeEffect]   - handleConnectWalletRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleConnectWalletRequest DEFINED.");
 
         window.handleIsWalletConnectedRequest = () => {
           const currentlyConnected = walletHookRef.current.connected;
@@ -361,32 +349,31 @@ export default function HomePage() {
           sendToUnityGame("GameBridgeManager", "OnWalletConnectionStatus", { isConnected: currentlyConnected, publicKey: pk });
           return currentlyConnected;
         };
-        console.log("[Page RUW BridgeEffect]   - handleIsWalletConnectedRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleIsWalletConnectedRequest DEFINED.");
 
         window.handleGetPublicKeyRequest = () => {
           const pk = walletHookRef.current.publicKey?.toBase58() || null;
           sendToUnityGame("GameBridgeManager", "OnPublicKeyReceived", { publicKey: pk });
           return pk;
         };
-        console.log("[Page RUW BridgeEffect]   - handleGetPublicKeyRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleGetPublicKeyRequest DEFINED.");
 
         window.handleDisconnectWalletRequest = async () => {
           try {
             await walletHookRef.current.disconnect();
-            // OnWalletDisconnected will be sent by the main wallet effect
           } catch (error: any) {
             sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: error.message, action: "disconnect_wallet" });
             toast({ title: "Wallet Disconnect Error", description: error.message, variant: "destructive" });
           }
         };
-        console.log("[Page RUW BridgeEffect]   - handleDisconnectWalletRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleDisconnectWalletRequest DEFINED.");
 
         window.handleGetAvailableWalletsRequest = () => {
           const available = availableWallets.map(w => ({ name: w.adapter.name, icon: w.adapter.icon, readyState: w.adapter.readyState }));
           sendToUnityGame("GameBridgeManager", "OnAvailableWalletsReceived", { wallets: available });
           return available;
         };
-        console.log("[Page RUW BridgeEffect]   - handleGetAvailableWalletsRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleGetAvailableWalletsRequest DEFINED.");
 
         window.handleSelectWalletRequest = (walletName: string) => {
           try {
@@ -395,14 +382,12 @@ export default function HomePage() {
             walletHookRef.current.select(walletName as WalletName);
             console.log(`[Page RUW Global] Wallet selected via handleSelectWalletRequest: ${walletName}. Modal might be needed if not auto-connecting.`);
             sendToUnityGame("GameBridgeManager", "OnWalletSelectAttempted", { walletName });
-             // Optionally, trigger connect automatically or open modal if not connecting
-            // For now, just selecting. Unity might call connect explicitly after this.
           } catch (error: any) {
             sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: error.message, action: "select_wallet_exception" });
             toast({ title: "Wallet Selection Error", description: error.message, variant: "destructive" });
           }
         };
-        console.log("[Page RUW BridgeEffect]   - handleSelectWalletRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleSelectWalletRequest DEFINED.");
         
         window.handleGetUserNFTsRequest = async () => {
           if (!walletHookRef.current.publicKey || !connection) { sendToUnityGame("GameBridgeManager", "OnUserNFTsRequested", { error: "Wallet not connected", nfts: [], cnfts: [] }); return; }
@@ -415,14 +400,15 @@ export default function HomePage() {
           } catch (e:any) { sendToUnityGame("GameBridgeManager", "OnUserNFTsRequested", { error: e.message, nfts:[], cnfts:[]}); }
           finally { setIsLoadingAssets(false); sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false }); }
         };
-        console.log("[Page RUW BridgeEffect]   - handleGetUserNFTsRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleGetUserNFTsRequest DEFINED.");
 
         window.handleGetUserTokensRequest = async () => {
           if (!walletHookRef.current.publicKey || !connection) { sendToUnityGame("GameBridgeManager", "OnUserTokensRequested", { error: "Wallet not connected", tokens: [], solBalance: 0 }); return; }
           setIsLoadingAssets(true); sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: true });
           try {
+            // fetchSolBalanceInternal now uses walletHookRef internally
             const [fetchedSol, { tokens: fetchedTokensFromHelius, heliusWarning }] = await Promise.all([
-                fetchSolBalanceInternal(walletHookRef.current.publicKey, connection),
+                fetchSolBalanceInternal(), 
                 fetchAssetsForOwner(walletHookRef.current.publicKey.toBase58(), rpcUrlRef.current, connection, walletHookRef.current)
             ]);
             if (heliusWarning) sendToUnityGame("GameBridgeManager", "OnHeliusWarning", { warning: heliusWarning, isError: heliusWarning.toLowerCase().includes("api key")});
@@ -431,13 +417,13 @@ export default function HomePage() {
           } catch (e:any) { sendToUnityGame("GameBridgeManager", "OnUserTokensRequested", { error: e.message, tokens:[], solBalance: 0}); }
           finally { setIsLoadingAssets(false); sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false }); }
         };
-        console.log("[Page RUW BridgeEffect]   - handleGetUserTokensRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleGetUserTokensRequest DEFINED.");
 
         window.handleGetSolBalanceRequest = async () => {
-          if (!walletHookRef.current.publicKey || !connection) { sendToUnityGame("GameBridgeManager", "OnSolBalanceUpdateFailed", { error: "Wallet not connected" }); return 0; }
-          return fetchSolBalanceInternal(walletHookRef.current.publicKey, connection);
+          // fetchSolBalanceInternal now uses walletHookRef internally
+          return fetchSolBalanceInternal(); 
         };
-        console.log("[Page RUW BridgeEffect]   - handleGetSolBalanceRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleGetSolBalanceRequest DEFINED.");
 
         const performTransaction = async (actionName: string, mint: string | null, transactionFn: () => Promise<string>, reloadAssets: boolean = true) => {
           if (isSubmittingTransactionRef.current) { sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: actionName, error: "Transaction in progress", mint }); return; }
@@ -447,10 +433,10 @@ export default function HomePage() {
             const signature = await transactionFn();
             toast({ title: `${actionName.replace(/_/g, ' ')} Initiated`, description: `Sig: ${signature.substring(0,10)}...`, action: <a href={getTransactionExplorerUrl(signature, currentNetworkRef.current)} target="_blank" rel="noopener noreferrer">View</a> });
             sendToUnityGame("GameBridgeManager", "OnTransactionSubmitted", { action: actionName, signature, mint, explorerUrl: getTransactionExplorerUrl(signature, currentNetworkRef.current) });
-            if (reloadAssets && walletHookRef.current.publicKey && rpcUrlRef.current && connection) { // Check walletHookRef.current
-                debouncedLoadUserAssets(walletHookRef.current.publicKey, rpcUrlRef.current, connection);
+            if (reloadAssets ) { 
+                debouncedLoadUserAssets(); // Now uses refs internally
             } else if (actionName === 'transfer_sol' || actionName === 'burn_sol' || actionName === 'deposit_sol') {
-                if (walletHookRef.current.publicKey && connection) fetchSolBalanceInternal(walletHookRef.current.publicKey, connection); // Check walletHookRef.current
+                fetchSolBalanceInternal(); // Now uses refs internally
             }
           } catch (error: any) { toast({ title: `${actionName.replace(/_/g, ' ')} Failed`, description: error.message, variant: "destructive" }); sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: actionName, error: error.message, mint });
           } finally { setIsSubmittingTransaction(false); sendToUnityGame("GameBridgeManager", "OnTransactionSubmitting", { action: actionName, submitting: false, mint }); }
@@ -461,7 +447,7 @@ export default function HomePage() {
             const recipientPublicKey = new PublicKey(toAddress);
             performTransaction("transfer_sol", null, () => transferSol(connection, walletHookRef.current, recipientPublicKey, amountSol), false);
         };
-        console.log("[Page RUW BridgeEffect]   - handleTransferSOLRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleTransferSOLRequest DEFINED.");
 
         window.handleTransferTokenRequest = (mint: string, amount: number, toAddress: string) => {
             const token = tokensRef.current.find(t => t.id === mint);
@@ -470,7 +456,7 @@ export default function HomePage() {
             const recipientPublicKey = new PublicKey(toAddress);
             performTransaction("transfer_token", mint, () => transferSplToken(connection, walletHookRef.current, token, recipientPublicKey, amount));
         };
-        console.log("[Page RUW BridgeEffect]   - handleTransferTokenRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleTransferTokenRequest DEFINED.");
 
         window.handleTransferNFTRequest = (mint: string, toAddress: string) => {
             const asset = allFetchedAssetsRef.current.find(a => a.id === mint && (a.type === 'nft' || a.type === 'cnft'));
@@ -479,13 +465,13 @@ export default function HomePage() {
             if (asset.type === 'nft') performTransaction("transfer_nft", mint, () => transferNft(connection, walletHookRef.current, asset as Nft, recipientPublicKey));
             else if (asset.type === 'cnft') performTransaction("transfer_nft", mint, () => transferCNft(connection, walletHookRef.current, asset as CNft, recipientPublicKey, rpcUrlRef.current));
         };
-        console.log("[Page RUW BridgeEffect]   - handleTransferNFTRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleTransferNFTRequest DEFINED.");
 
          window.handleBurnSOLRequest = (amountSol: number) => {
             if (amountSol <= 0) { sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: "burn_sol", error: "Amount must be positive" }); return; }
             performTransaction("burn_sol", null, () => burnSol(connection, walletHookRef.current, amountSol), false);
         };
-        console.log("[Page RUW BridgeEffect]   - handleBurnSOLRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleBurnSOLRequest DEFINED.");
 
         window.handleBurnAssetRequest = (mint: string, amount?: number) => {
             const asset = allFetchedAssetsRef.current.find(a => a.id === mint);
@@ -497,7 +483,7 @@ export default function HomePage() {
                 performTransaction("burn_asset", mint, () => burnSplToken(connection, walletHookRef.current, asset as SplToken, amount));
             }
         };
-        console.log("[Page RUW BridgeEffect]   - handleBurnAssetRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleBurnAssetRequest DEFINED.");
 
         window.handleMintNFTRequest = (name: string, symbol: string, metadataUri: string) => {
           if (currentNetworkRef.current === 'mainnet-beta') {
@@ -506,13 +492,13 @@ export default function HomePage() {
           }
           performTransaction("mint_nft", name, () => mintStandardNft(connection, walletHookRef.current, metadataUri, name, symbol));
         };
-        console.log("[Page RUW BridgeEffect]   - handleMintNFTRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleMintNFTRequest DEFINED.");
 
         window.handleSwapTokensRequest = () => {
           const msg = "Token swapping is not yet implemented.";
           toast({ title: "Feature Unavailable", description: msg }); sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: "swap_tokens", error: msg });
         };
-        console.log("[Page RUW BridgeEffect]   - handleSwapTokensRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleSwapTokensRequest DEFINED.");
 
         window.handleDepositFundsRequest = (tokenMintOrSol: string, amount: number) => {
             if (!CUSTODIAL_WALLET_ADDRESS) { sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: "deposit_funds", error: "Custodial address not set", tokenMint: tokenMintOrSol }); return; }
@@ -525,7 +511,7 @@ export default function HomePage() {
                 performTransaction("deposit_funds", tokenMintOrSol, () => depositSplToken(connection, walletHookRef.current, token, amount, CUSTODIAL_WALLET_ADDRESS));
             }
         };
-        console.log("[Page RUW BridgeEffect]   - handleDepositFundsRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleDepositFundsRequest DEFINED.");
 
         window.handleWithdrawFundsRequest = async (tokenMintOrSol: string, grossAmount: number) => {
           if (isSubmittingTransactionRef.current) { sendToUnityGame("GameBridgeManager", "OnWithdrawalResponse", { success: false, message: "Transaction in progress", action: "withdraw_funds", tokenMint: tokenMintOrSol }); return; }
@@ -542,7 +528,7 @@ export default function HomePage() {
             }
             if (result.success) {
               toast({ title: "Withdrawal Processed", description: result.signature ? `Sig: ${result.signature.substring(0,10)}...` : result.message, action: result.signature ? <a href={getTransactionExplorerUrl(result.signature, currentNetworkRef.current)} target="_blank" rel="noopener noreferrer">View</a> : undefined });
-              if (walletHookRef.current.publicKey && connection) fetchSolBalanceInternal(walletHookRef.current.publicKey, connection);
+              fetchSolBalanceInternal(); // Uses refs internally
             } else {
               toast({ title: "Withdrawal Failed", description: result.message, variant: "destructive" });
             }
@@ -550,21 +536,21 @@ export default function HomePage() {
           } catch (error: any) { toast({ title: "Withdrawal Request Error", description: error.message, variant: "destructive" }); sendToUnityGame("GameBridgeManager", "OnWithdrawalResponse", { success: false, message: error.message, error: error.message, action: "withdraw_funds", tokenMint: tokenMintOrSol });
           } finally { setIsSubmittingTransaction(false); sendToUnityGame("GameBridgeManager", "OnTransactionSubmitting", { action: "withdraw_funds", submitting: false, tokenMint: tokenMintOrSol }); }
         };
-        console.log("[Page RUW BridgeEffect]   - handleWithdrawFundsRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleWithdrawFundsRequest DEFINED.");
 
         window.handleSetNetworkRequest = (network: SupportedSolanaNetwork) => {
             setCurrentNetwork(network); 
             sendToUnityGame("GameBridgeManager", "OnNetworkChanged", { network });
         };
-        console.log("[Page RUW BridgeEffect]   - handleSetNetworkRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleSetNetworkRequest DEFINED.");
 
         window.handleGetCurrentNetworkRequest = () => {
             sendToUnityGame("GameBridgeManager", "OnCurrentNetworkReceived", { network: currentNetworkRef.current });
             return currentNetworkRef.current;
         };
-        console.log("[Page RUW BridgeEffect]   - handleGetCurrentNetworkRequest is active.");
+        console.log("[Page RUW BridgeEffect]   - handleGetCurrentNetworkRequest DEFINED.");
 
-        console.log("[Page RUW BridgeEffect] Global Request Handlers DEFINED.");
+        console.log("[Page RUW BridgeEffect] All Global Request Handlers DEFINED.");
     }
     
     const handleGameBridgeManagerReady = () => {
@@ -600,9 +586,10 @@ export default function HomePage() {
       }
     };
   }, [
-      isLoaded, connection, walletModal, availableWallets, setCurrentNetwork, // Direct dependencies for setup
-      sendToUnityGame, toast, fetchSolBalanceInternal, debouncedLoadUserAssets, // Callbacks
-      addEventListener, removeEventListener, detachAndUnload // from useUnityContext
+      isLoaded, connection, walletModal, availableWallets, // Relatively stable or change infrequently
+      setCurrentNetwork, sendToUnityGame, toast, // Stable callbacks from hooks/context
+      fetchSolBalanceInternal, debouncedLoadUserAssets, // Memoized local callbacks
+      addEventListener, removeEventListener, detachAndUnload // Stable from useUnityContext
   ]);
 
 
@@ -629,11 +616,14 @@ export default function HomePage() {
         ) : !isLoaded ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-background z-50">
              <div className="w-60 h-60 mb-4">
-                <img
+                <Image
                      src={`/Build/${gameBaseNameOrDefault}_Logo.png`} 
                      alt="Game Logo"
-                     className="w-full h-full object-contain"
+                     width={240}
+                     height={240}
+                     className="object-contain"
                      data-ai-hint="phoenix fire"
+                     priority
                      onError={(e) => { (e.target as HTMLImageElement).src = 'https://placehold.co/240x240.png'; (e.target as HTMLImageElement).alt = 'Game Logo Placeholder'; }}
                 />
              </div>
@@ -651,7 +641,7 @@ export default function HomePage() {
               <p className="text-xs text-muted-foreground mt-2 px-4 text-center">If stuck, check browser console (F12) for errors.</p>
           </div>
         ) : null}
-        {isClientMounted && ( // Only render Unity component on client after mount
+        {isClientMounted && ( 
             <Unity
                 id="react-unity-webgl-canvas" 
                 unityProvider={unityProvider}
@@ -665,3 +655,4 @@ export default function HomePage() {
     </div>
   );
 }
+
