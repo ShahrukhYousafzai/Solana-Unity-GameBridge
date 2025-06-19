@@ -32,18 +32,18 @@ const ConnectWalletButton = dynamic(
   }
 );
 
-// Define the expected structure for the iframe's window content
 interface IframeWindow extends Window {
-  initUnityInIframe?: (config: any, loaderUrl: string) => void;
-  unityGameSendMessage?: (gameObjectName: string, methodName: string, message: string) => void;
-  unityInstance?: any; // For debugging, direct access to instance in iframe
+  unityInstance?: { // Unity's default loader often sets it on the window
+    SendMessage: (gameObjectName: string, methodName: string, message: string | number | undefined) => void;
+    Quit?: () => Promise<void>;
+  };
+  // We are no longer defining initUnityInIframe here
 }
-
 
 declare global {
   interface Window {
-    unityBridge?: any; // Bridge object for jslib to call into (defined on parent)
-    callConnectWalletFromUnity?: () => void; // Global helper for simpler jslib calls
+    unityBridge?: any; 
+    callConnectWalletFromUnity?: () => void;
   }
 }
 
@@ -63,7 +63,6 @@ function debounce<F extends (...args: any[]) => Promise<any>>(func: F, waitFor: 
   };
 }
 
-
 export default function HomePage() {
   const { connection } = useConnection();
   const walletHook = useWallet();
@@ -79,10 +78,8 @@ export default function HomePage() {
   const [isLoadingAssets, setIsLoadingAssets] = useState(false);
   const [isSubmittingTransaction, setIsSubmittingTransaction] = useState(false);
   
-  const [isIframeLoading, setIsIframeLoading] = useState(true);
-  const [isUnityGameLoading, setIsUnityGameLoading] = useState(true); // For the Unity loader progress within the iframe
-  const [unityLoadingProgress, setUnityLoadingProgress] = useState(0);
-
+  const [isIframeLoading, setIsIframeLoading] = useState(true); // Tracks if the iframe src has loaded
+  const [isUnityInstanceReady, setIsUnityInstanceReady] = useState(false); // Tracks if unityInstance is available in iframe
 
   const nftsRef = useRef(nfts);
   const cnftsRef = useRef(cnfts);
@@ -93,6 +90,7 @@ export default function HomePage() {
   const rpcUrlRef = useRef(rpcUrl);
   const currentNetworkRef = useRef(currentNetwork);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const unityInstanceOnIframeRef = useRef<IframeWindow["unityInstance"] | null>(null);
 
 
   useEffect(() => { nftsRef.current = nfts; }, [nfts]);
@@ -106,21 +104,15 @@ export default function HomePage() {
 
 
   const sendToUnity = useCallback((gameObjectName: string, methodName: string, message: any) => {
-    if (iframeRef.current && iframeRef.current.contentWindow) {
-      const iframeContentWindow = iframeRef.current.contentWindow as IframeWindow;
+    if (unityInstanceOnIframeRef.current && typeof unityInstanceOnIframeRef.current.SendMessage === 'function') {
       const replacer = (key: string, value: any) => (typeof value === 'bigint' ? value.toString() : value);
       const msgStr = typeof message === 'object' ? JSON.stringify(message, replacer) : String(message);
-      
-      if (typeof iframeContentWindow.unityGameSendMessage === 'function') {
-        iframeContentWindow.unityGameSendMessage(gameObjectName, methodName, msgStr);
-        console.log(`[ParentPage] Sent to Unity in iframe: ${gameObjectName}.${methodName}`, message);
-      } else {
-        console.warn(`[ParentPage] sendToUnity: unityGameSendMessage function not found on iframe. Cannot send message to ${gameObjectName}.${methodName}.`);
-      }
+      unityInstanceOnIframeRef.current.SendMessage(gameObjectName, methodName, msgStr);
+      console.log(`[ParentPage] Sent to Unity in iframe: ${gameObjectName}.${methodName}`, message);
     } else {
-      console.warn("[ParentPage] sendToUnity: Iframe not available. Cannot send message.");
+      console.warn(`[ParentPage] sendToUnity: Unity instance or SendMessage not available on iframe. Cannot send. Unity Ready: ${isUnityInstanceReady}`);
     }
-  }, []);
+  }, [isUnityInstanceReady]);
 
 
   const fetchSolBalanceInternal = useCallback(async (
@@ -190,14 +182,14 @@ export default function HomePage() {
   const debouncedLoadUserAssets = useMemo(() => debounce(loadUserAssetsInternal, 500), [loadUserAssetsInternal]);
 
   useEffect(() => {
-    if (connected && publicKey && rpcUrlRef.current && connection && walletHook) {
+    if (connected && publicKey && rpcUrlRef.current && connection && walletHook && isUnityInstanceReady) {
       sendToUnity("GameBridgeManager", "OnWalletConnected", { publicKey: publicKey.toBase58() });
       debouncedLoadUserAssets(publicKey, rpcUrlRef.current, connection, walletHook);
-    } else {
+    } else if (!connected && isUnityInstanceReady) {
       sendToUnity("GameBridgeManager", "OnWalletDisconnected", {});
       setNfts([]); setCnfts([]); setTokens([]); _setSolBalance(0);
     }
-  }, [connected, publicKey, connection, walletHook, debouncedLoadUserAssets, sendToUnity, rpcUrl]);
+  }, [connected, publicKey, connection, walletHook, debouncedLoadUserAssets, sendToUnity, rpcUrl, isUnityInstanceReady]);
 
 
   const buildUnityBridge = useCallback(() => {
@@ -469,10 +461,7 @@ export default function HomePage() {
     } else {
         console.log("[ParentPage] Global function 'callConnectWalletFromUnity' ALREADY EXISTS on window.");
     }
-    // Inform iframe Unity (if ready) that parent bridge is ready. This might be too early.
-    // The iframe itself will call sendToUnity once its internal Unity is ready.
-    // sendToUnity("GameBridgeManager", "OnUnityReady", {}); // "OnUnityReady" usually means web bridge for jslib is ready.
-
+    
     return () => {
       console.log("[ParentPage] Effect: Cleanup window.unityBridge and callConnectWalletFromUnity.");
       delete window.unityBridge;
@@ -481,71 +470,57 @@ export default function HomePage() {
   }, [buildUnityBridge, sendToUnity]);
 
 
-  const handleIframeLoad = () => {
-    console.log("[ParentPage] Iframe loaded.");
-    setIsIframeLoading(false);
-    if (iframeRef.current && iframeRef.current.contentWindow) {
-      const iframeContentWindow = iframeRef.current.contentWindow as IframeWindow;
-      
-      if (typeof iframeContentWindow.initUnityInIframe === 'function') {
-        console.log("[ParentPage] Calling initUnityInIframe on iframe content window.");
-        
-        const gameBaseName = UNITY_GAME_BUILD_BASE_NAME || "MyGame"; // Fallback
-        if (!UNITY_GAME_BUILD_BASE_NAME) {
-             console.warn(`[ParentPage] UNITY_GAME_BUILD_BASE_NAME is not set in config, defaulting to '${gameBaseName}'. Ensure NEXT_PUBLIC_UNITY_GAME_BUILD_BASE_NAME env var is set.`);
+  const handleIframeLoad = useCallback(() => {
+    console.log("[ParentPage] Iframe loaded (/unity.html). Attempting to locate unityInstance.");
+    setIsIframeLoading(false); // Iframe src has loaded
+
+    const checkForUnityInstance = () => {
+      if (iframeRef.current && iframeRef.current.contentWindow) {
+        const iframeContentWindow = iframeRef.current.contentWindow as IframeWindow;
+        if (iframeContentWindow.unityInstance && typeof iframeContentWindow.unityInstance.SendMessage === 'function') {
+          console.log("[ParentPage] unityInstance found in iframe. Unity is ready.");
+          unityInstanceOnIframeRef.current = iframeContentWindow.unityInstance;
+          setIsUnityInstanceReady(true);
+          // Inform Unity that the parent page bridge is ready and Unity itself is now considered "ready" by the parent.
+          sendToUnity("GameBridgeManager", "OnUnityReady", {});
+          return; // Stop checking
         }
-
-        const unityConfig = {
-          dataUrl: `/Build/${gameBaseName}.data`,
-          frameworkUrl: `/Build/${gameBaseName}.framework.js`,
-          codeUrl: `/Build/${gameBaseName}.wasm`,
-          // companyName, productName, productVersion can be added if needed by loader
-        };
-        const loaderUrl = `/Build/${gameBaseName}.loader.js`;
-
-        iframeContentWindow.initUnityInIframe(unityConfig, loaderUrl);
-      } else {
-        console.error("[ParentPage] initUnityInIframe function not found on iframe content window after load.");
       }
-    } else {
-      console.error("[ParentPage] Iframe ref or contentWindow not available after load.");
-    }
-  };
+      // If not found, try again shortly
+      console.log("[ParentPage] unityInstance not yet available in iframe. Retrying...");
+      setTimeout(checkForUnityInstance, 500);
+    };
 
-  // Listen for messages from iframe (e.g., Unity loading progress)
+    setTimeout(checkForUnityInstance, 500); // Initial check after a short delay
+  }, [sendToUnity]);
+
+  // Effect for iframe lifecycle and cleanup (Quit Unity)
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      // Basic security check for origin if needed:
-      // if (event.origin !== window.location.origin) return;
+    console.log('[ParentPage] Top-level useEffect for iframe/Unity lifecycle runs.');
+    // This effect runs once on mount and cleans up on unmount
+    // The iframe loading and subsequent unityInstance check is handled by handleIframeLoad callback
 
-      if (event.data && event.data.type) {
-        switch (event.data.type) {
-          case "UNITY_IFRAME_LOADING_PROGRESS":
-            setIsUnityGameLoading(true); // Ensure this is true while progress < 100
-            setUnityLoadingProgress(event.data.progress * 100);
-            break;
-          case "UNITY_IFRAME_READY":
-            console.log("[ParentPage] Received UNITY_IFRAME_READY from iframe.");
-            setIsUnityGameLoading(false);
-            setUnityLoadingProgress(100);
-            // Potentially send "OnUnityReady" to Unity now that iframe's Unity confirmed it's up
-            sendToUnity("GameBridgeManager", "OnUnityReady", {});
-            break;
-          case "UNITY_IFRAME_LOAD_ERROR":
-            console.error("[ParentPage] Received UNITY_IFRAME_LOAD_ERROR from iframe:", event.data.message);
-            toast({ title: "Game Load Error (Iframe)", description: event.data.message, variant: "destructive", duration: 30000 });
-            setIsUnityGameLoading(false);
-            // Display an error in the parent UI if needed
-            break;
-        }
-      }
-    };
-
-    window.addEventListener("message", handleMessage);
     return () => {
-      window.removeEventListener("message", handleMessage);
+      console.log("[ParentPage] HomePage unmounting. Attempting to quit Unity instance in iframe.");
+      if (unityInstanceOnIframeRef.current && typeof unityInstanceOnIframeRef.current.Quit === 'function') {
+        unityInstanceOnIframeRef.current.Quit().then(() => {
+          console.log("[ParentPage] Unity instance in iframe quit successfully.");
+        }).catch((err: any) => {
+          console.error("[ParentPage] Error quitting Unity instance in iframe:", err);
+        });
+      } else {
+        console.warn("[ParentPage] No Unity instance or Quit function found on iframe to call on unmount.");
+      }
+      unityInstanceOnIframeRef.current = null;
+      setIsUnityInstanceReady(false);
+      setIsIframeLoading(true); // Reset for potential remount
     };
-  }, [sendToUnity, toast]);
+  }, []);
+
+  const gameBaseNameOrDefault = UNITY_GAME_BUILD_BASE_NAME || "MyGame";
+  if (!UNITY_GAME_BUILD_BASE_NAME) {
+      console.warn(`[ParentPage] UNITY_GAME_BUILD_BASE_NAME is not set in config, logo might default. Ensure NEXT_PUBLIC_UNITY_GAME_BUILD_BASE_NAME env var is set if you have a custom logo name.`);
+  }
 
 
   return (
@@ -558,11 +533,11 @@ export default function HomePage() {
       </header>
 
       <main className="flex-1 w-full relative overflow-hidden p-0 m-0">
-        {(isIframeLoading || isUnityGameLoading) && (
+        {(isIframeLoading || !isUnityInstanceReady) && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-background z-50">
              <div className="w-60 h-60 mb-4">
                 <img
-                     src={`/Build/${UNITY_GAME_BUILD_BASE_NAME || 'MyGame'}_Logo.png`}
+                     src={`/Build/${gameBaseNameOrDefault}_Logo.png`}
                      alt="Game Logo"
                      className="w-full h-full object-contain"
                      data-ai-hint="phoenix fire"
@@ -572,28 +547,32 @@ export default function HomePage() {
             <div className="w-3/4 max-w-md h-5 bg-muted rounded-full overflow-hidden relative shadow-inner">
               <div
                 className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-150 rounded-full"
-                style={{ width: `${isIframeLoading ? 0 : unityLoadingProgress}%`}}
+                style={{ width: `${isIframeLoading ? 0 : (isUnityInstanceReady ? 100 : 50 )}%`}} // Simplified progress
               ></div>
               <div className="absolute inset-0 flex items-center justify-center">
                 <p className="text-xs font-bold text-primary-foreground drop-shadow-sm">
-                    {isIframeLoading ? "Initializing..." : `${Math.round(unityLoadingProgress)}%`}
+                    {isIframeLoading ? "Initializing..." : (!isUnityInstanceReady ? "Loading Game..." : "Ready")}
                 </p>
               </div>
             </div>
-             <p className="text-lg text-foreground mt-4">{isIframeLoading ? "Loading Host..." : "Loading Game..."}</p>
-             <p className="text-sm text-muted-foreground mt-2">If stuck, check browser console (F12) for errors in both parent and iframe contexts.</p>
+             <p className="text-lg text-foreground mt-4">{isIframeLoading ? "Loading Host..." : (!isUnityInstanceReady ? "Loading Game..." : "Game Ready")}</p>
+             <p className="text-sm text-muted-foreground mt-2">
+                Game is embedded from <code>/unity.html</code>. Ensure this file is your Unity build's <code>index.html</code> (renamed)
+                and <code>/public/Build/</code> contains Unity's <code>Build</code> folder contents.
+             </p>
+             <p className="text-xs text-muted-foreground mt-1">If stuck, check browser console (F12) for errors in both parent and iframe (right-click game > Inspect).</p>
           </div>
         )}
         <iframe
             ref={iframeRef}
-            src="/unity-game-host.html"
-            className={`w-full h-full border-0 ${(isIframeLoading || isUnityGameLoading) ? 'opacity-0' : 'opacity-100'} transition-opacity duration-500`}
+            src="/unity.html" // Points to the renamed Unity index.html in /public
+            className={`w-full h-full border-0 ${(isIframeLoading || !isUnityInstanceReady) ? 'opacity-0' : 'opacity-100'} transition-opacity duration-500`}
             title="Unity Game"
             onLoad={handleIframeLoad}
             sandbox="allow-scripts allow-same-origin allow-pointer-lock" 
-            // allow="fullscreen; gamepad; autoplay" // Add autoplay if your game needs it
         ></iframe>
       </main>
     </div>
   );
 }
+
