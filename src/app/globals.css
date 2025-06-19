@@ -79,7 +79,8 @@
 
 /* Attempt to hide the "Change wallet" option from WalletMultiButton dropdown */
 /* This relies on the order of items in the dropdown and might be brittle. */
-/* The "Change wallet" item is typically the 3rd list item. */
-.wallet-adapter-dropdown-list .wallet-adapter-dropdown-list-item:nth-child(3) {
+/* The "Change wallet" item is typically the 2nd list item when connected. */
+.wallet-adapter-dropdown-list .wallet-adapter-dropdown-list-item:nth-child(2) {
   display: none !important;
 }
+
