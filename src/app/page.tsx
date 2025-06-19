@@ -32,22 +32,17 @@ const ConnectWalletButton = dynamic(
   }
 );
 
-// For communication with Unity instance inside iframe
 interface IframeUnityWindow extends Window {
   unityInstance?: {
     SendMessage: (gameObjectName: string, methodName: string, message: string | number | undefined) => void;
     Quit?: () => Promise<void>;
   };
-  // Potentially a function set by unity.html to signal readiness
-  notifyParentPageReady?: () => void;
 }
 
 declare global {
   interface Window {
-    unityBridge?: any; // This will live on the parent window (page.tsx)
-    callConnectWalletFromUnity?: () => void; // Global helper on parent
-    // For messages from iframe
-    handleUnityIframeMessage?: (event: MessageEvent) => void;
+    unityBridge?: any; 
+    callConnectWalletFromUnity?: () => void;
   }
 }
 
@@ -82,8 +77,8 @@ export default function HomePage() {
   const [isLoadingAssets, setIsLoadingAssets] = useState(false);
   const [isSubmittingTransaction, setIsSubmittingTransaction] = useState(false);
   
-  const [isIframeLoading, setIsIframeLoading] = useState(true); // For iframe's own HTML load
-  const [isUnityInstanceReadyInParent, setIsUnityInstanceReadyInParent] = useState(false); // If parent can talk to Unity
+  const [isIframeLoading, setIsIframeLoading] = useState(true);
+  const [isUnityInstanceReadyInParent, setIsUnityInstanceReadyInParent] = useState(false);
 
   const nftsRef = useRef(nfts);
   const cnftsRef = useRef(cnfts);
@@ -94,9 +89,7 @@ export default function HomePage() {
   const rpcUrlRef = useRef(rpcUrl);
   const currentNetworkRef = useRef(currentNetwork);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  // Stores the Unity instance from *within* the iframe, for the parent to use
   const unityInstanceOnIframeRef = useRef<IframeUnityWindow["unityInstance"] | null>(null);
-
 
   useEffect(() => { nftsRef.current = nfts; }, [nfts]);
   useEffect(() => { cnftsRef.current = cnfts; }, [cnfts]);
@@ -107,15 +100,18 @@ export default function HomePage() {
   useEffect(() => { rpcUrlRef.current = rpcUrl; }, [rpcUrl]);
   useEffect(() => { currentNetworkRef.current = currentNetwork; }, [currentNetwork]);
 
-
   const sendToUnity = useCallback((gameObjectName: string, methodName: string, message: any) => {
     if (unityInstanceOnIframeRef.current && typeof unityInstanceOnIframeRef.current.SendMessage === 'function') {
       const replacer = (key: string, value: any) => (typeof value === 'bigint' ? value.toString() : value);
       const msgStr = typeof message === 'object' ? JSON.stringify(message, replacer) : String(message);
-      unityInstanceOnIframeRef.current.SendMessage(gameObjectName, methodName, msgStr);
-      console.log(`[ParentPage] Sent to Unity in iframe: ${gameObjectName}.${methodName}`, message);
+      try {
+        unityInstanceOnIframeRef.current.SendMessage(gameObjectName, methodName, msgStr);
+        console.log(`[ParentPage DEBUG] Sent to Unity in iframe: ${gameObjectName}.${methodName}`, message);
+      } catch (e) {
+        console.error(`[ParentPage ERROR] Error sending message to Unity in iframe: ${gameObjectName}.${methodName}`, e, "Message was:", message, "Unity instance ref:", unityInstanceOnIframeRef.current);
+      }
     } else {
-      console.warn(`[ParentPage] sendToUnity: Unity instance (SendMessage) not available on iframe. Cannot send. isUnityInstanceReadyInParent: ${isUnityInstanceReadyInParent}. unityInstanceOnIframeRef.current:`, unityInstanceOnIframeRef.current);
+      console.warn(`[ParentPage WARN] sendToUnity: Unity instance (SendMessage) not available on iframe. Cannot send. isUnityInstanceReadyInParent: ${isUnityInstanceReadyInParent}. unityInstanceOnIframeRef.current:`, unityInstanceOnIframeRef.current);
     }
   }, [isUnityInstanceReadyInParent]);
 
@@ -132,7 +128,7 @@ export default function HomePage() {
         sendToUnity("GameBridgeManager", "OnSolBalanceUpdated", { solBalance: sol });
         return sol;
       } catch (error: any) {
-        console.error("Failed to fetch SOL balance:", error);
+        console.error("[ParentPage ERROR] Failed to fetch SOL balance:", error);
         toast({ title: "Error Fetching SOL Balance", description: error.message, variant: "destructive" });
         sendToUnity("GameBridgeManager", "OnSolBalanceUpdateFailed", { error: error.message });
         return 0;
@@ -174,7 +170,7 @@ export default function HomePage() {
          toast({ title: "Asset Scan Complete", description: `Found ${fetchedNfts.length} NFTs, ${fetchedCnfts.length} cNFTs, ${fetchedTokens.length} Tokens, and ${fetchedSol.toFixed(SOL_DECIMALS)} SOL on ${currentNetworkRef.current}.` });
       }
     } catch (error: any) {
-      console.error("Failed to load assets:", error);
+      console.error("[ParentPage ERROR] Failed to load assets:", error);
       toast({ title: "Error Loading Assets", description: error.message, variant: "destructive" });
       sendToUnity("GameBridgeManager", "OnAssetsLoadFailed", { error: error.message });
       setNfts([]); setCnfts([]); setTokens([]); _setSolBalance(0);
@@ -186,18 +182,17 @@ export default function HomePage() {
 
   const debouncedLoadUserAssets = useMemo(() => debounce(loadUserAssetsInternal, 500), [loadUserAssetsInternal]);
 
-  // Effect for asset loading & wallet status updates, dependent on Unity being ready for messages.
   useEffect(() => {
-    if (!isUnityInstanceReadyInParent) { // Use the parent's readiness flag
-      console.log("[ParentPage] Unity instance not ready for bridge communication, skipping asset load/wallet status update to Unity.");
+    if (!isUnityInstanceReadyInParent) {
+      console.log("[ParentPage INFO] Unity instance not ready for bridge communication, skipping asset load/wallet status update to Unity.");
       return;
     }
     if (connected && publicKey && rpcUrlRef.current && connection && walletHook) {
-      console.log("[ParentPage] Wallet connected and Unity ready for bridge. Sending OnWalletConnected to Unity and loading assets.");
+      console.log("[ParentPage INFO] Wallet connected and Unity ready for bridge. Sending OnWalletConnected to Unity and loading assets.");
       sendToUnity("GameBridgeManager", "OnWalletConnected", { publicKey: publicKey.toBase58() });
       debouncedLoadUserAssets(publicKey, rpcUrlRef.current, connection, walletHook);
     } else if (!connected) {
-      console.log("[ParentPage] Wallet disconnected and Unity ready for bridge. Sending OnWalletDisconnected to Unity.");
+      console.log("[ParentPage INFO] Wallet disconnected and Unity ready for bridge. Sending OnWalletDisconnected to Unity.");
       sendToUnity("GameBridgeManager", "OnWalletDisconnected", {});
       setNfts([]); setCnfts([]); setTokens([]); _setSolBalance(0);
     }
@@ -205,18 +200,16 @@ export default function HomePage() {
 
 
   const buildUnityBridge = useCallback(() => {
-    // This bridge object is assigned to window.unityBridge on the PARENT page.
-    // The .jslib file inside the iframe calls window.parent.unityBridge.methodName().
     return {
       connectWallet: async () => {
-        console.log("[ParentPage Bridge] bridge.connectWallet CALLED. walletHook.wallet:", walletHook.wallet, "walletHook.connected:", walletHook.connected);
+        console.log("[ParentPage Bridge] bridge.connectWallet CALLED. walletHook.wallet:", walletHook.wallet?.adapter.name, "walletHook.connected:", walletHook.connected);
         if (walletHook.connected) {
             sendToUnity("GameBridgeManager", "OnWalletConnected", { publicKey: walletHook.publicKey?.toBase58() });
             return;
         }
         if (!walletHook.wallet) {
             console.warn("[ParentPage Bridge] connectWallet: No wallet type selected. Opening wallet selection modal.");
-            setTimeout(() => walletModal.setVisible(true), 0); // Defer to next tick
+            setTimeout(() => walletModal.setVisible(true), 0); 
             return;
         }
         const adapterState = walletHook.wallet.adapter.readyState;
@@ -228,7 +221,7 @@ export default function HomePage() {
            return;
         }
         try {
-          await connectWalletAdapter(); // This promise resolves when connection attempt is made
+          await connectWalletAdapter(); 
         } catch (error: any) {
           sendToUnity("GameBridgeManager", "OnWalletConnectionError", { error: error.message, details: error.name, action: "connect_wallet_attempt" });
           toast({ title: "Wallet Connection Error", description: `${error.name}: ${error.message}`, variant: "destructive" });
@@ -248,7 +241,6 @@ export default function HomePage() {
       disconnectWallet: async () => {
         try {
           await disconnectWalletAdapter();
-          // OnWalletDisconnected is sent via the useEffect watching `connected` state changes.
         } catch (error: any) {
           sendToUnity("GameBridgeManager", "OnWalletConnectionError", { error: error.message, action: "disconnect_wallet" });
           toast({ title: "Wallet Disconnect Error", description: error.message, variant: "destructive" });
@@ -268,7 +260,7 @@ export default function HomePage() {
             sendToUnity("GameBridgeManager", "OnWalletConnectionError", { error: err, action: "select_wallet" });
             return;
           }
-          select(walletName as WalletName); // Adapter select method
+          select(walletName as WalletName); 
           sendToUnity("GameBridgeManager", "OnWalletSelectAttempted", { walletName });
         } catch (error: any) {
           sendToUnity("GameBridgeManager", "OnWalletConnectionError", { error: error.message, action: "select_wallet" });
@@ -455,106 +447,121 @@ export default function HomePage() {
     sendToUnity, toast, fetchSolBalanceInternal, debouncedLoadUserAssets, setCurrentNetwork,
   ]);
 
+  // Effect for Unity instance lifecycle (Quit on parent unmount)
+  useEffect(() => {
+    console.log('[ParentPage INFO] HomePage component mounted. Iframe will be rendered.');
+    
+    return () => {
+      console.log("[ParentPage INFO] HomePage unmounting. Attempting to quit Unity instance in iframe.");
+      if (unityInstanceOnIframeRef.current && typeof unityInstanceOnIframeRef.current.Quit === 'function') {
+        unityInstanceOnIframeRef.current.Quit().then(() => {
+          console.log("[ParentPage INFO] Unity instance in iframe quit successfully.");
+        }).catch((err: any) => {
+          console.error("[ParentPage ERROR] Error quitting Unity instance in iframe:", err);
+        });
+      } else {
+        console.warn("[ParentPage WARN] No Unity instance or Quit function found on iframe to call on unmount.");
+      }
+      unityInstanceOnIframeRef.current = null;
+      setIsUnityInstanceReadyInParent(false); // Signal that Unity is no longer ready
+      setIsIframeLoading(true); 
+    };
+  }, []); 
+
   // Effect to manage the window.unityBridge and global helper functions
   useEffect(() => {
-    console.log("[ParentPage] Bridge Management Effect: isUnityInstanceReadyInParent:", isUnityInstanceReadyInParent, "buildUnityBridge changed:", !!buildUnityBridge);
+    console.log("[ParentPage DEBUG] Bridge Management Effect triggered. isUnityInstanceReadyInParent:", isUnityInstanceReadyInParent);
     if (isUnityInstanceReadyInParent) {
-      console.log("[ParentPage] Unity instance is ready. Defining/Updating window.unityBridge.");
+      console.log("[ParentPage INFO] Unity instance is ready IN PARENT. DEFINING/UPDATING window.unityBridge now.");
       const bridge = buildUnityBridge();
-      window.unityBridge = bridge;
+      (window as any).unityBridge = bridge; // PARENT window
+      console.log("[ParentPage SUCC] window.unityBridge DEFINED on parent window:", (window as any).unityBridge);
 
-      if (!window.callConnectWalletFromUnity) {
-        window.callConnectWalletFromUnity = () => {
-          console.log("[ParentPage Global] callConnectWalletFromUnity() invoked.");
-          if (window.unityBridge && typeof window.unityBridge.connectWallet === 'function') {
-            window.unityBridge.connectWallet();
+
+      if (!(window as any).callConnectWalletFromUnity) {
+        (window as any).callConnectWalletFromUnity = () => {
+          console.log("[ParentPage Global] callConnectWalletFromUnity() invoked from parent.");
+          if ((window as any).unityBridge && typeof (window as any).unityBridge.connectWallet === 'function') {
+            (window as any).unityBridge.connectWallet();
           } else {
-            console.error("[ParentPage Global] window.unityBridge.connectWallet not available.");
+            console.error("[ParentPage Global ERROR] window.unityBridge.connectWallet not available from global call. window.unityBridge:", (window as any).unityBridge);
             sendToUnity("GameBridgeManager", "OnWalletConnectionError", { error: "Parent Bridge connectWallet not ready from global call." });
           }
         };
-        console.log("[ParentPage] Global 'callConnectWalletFromUnity' DEFINED.");
+        console.log("[ParentPage INFO] Global 'callConnectWalletFromUnity' DEFINED on parent.");
       }
     } else {
-      console.log("[ParentPage] Unity instance NOT ready. Deferring bridge definition.");
+      console.log("[ParentPage INFO] Unity instance NOT ready IN PARENT. Deferring bridge definition or bridge already cleaned up.");
+      if ((window as any).unityBridge) {
+        console.log("[ParentPage INFO] Deleting existing window.unityBridge as Unity is no longer ready.");
+        delete (window as any).unityBridge;
+      }
+      if ((window as any).callConnectWalletFromUnity) {
+        console.log("[ParentPage INFO] Deleting existing window.callConnectWalletFromUnity as Unity is no longer ready.");
+        delete (window as any).callConnectWalletFromUnity;
+      }
     }
-    // Cleanup on unmount of HomePage or if isUnityInstanceReadyInParent becomes false
+
     return () => {
-      delete window.unityBridge;
-      delete window.callConnectWalletFromUnity;
-      console.log("[ParentPage] Cleaned up window.unityBridge and callConnectWalletFromUnity.");
+      // This cleanup runs when dependencies change (isUnityInstanceReadyInParent, buildUnityBridge) or on unmount.
+      console.log("[ParentPage INFO] Cleaning up window.unityBridge and callConnectWalletFromUnity from Bridge Management Effect. Current isUnityInstanceReadyInParent:", isUnityInstanceReadyInParent);
+      if ((window as any).unityBridge) {
+         delete (window as any).unityBridge;
+         console.log("[ParentPage DEBUG] window.unityBridge DELETED.");
+      }
+      if ((window as any).callConnectWalletFromUnity) {
+        delete (window as any).callConnectWalletFromUnity;
+        console.log("[ParentPage DEBUG] window.callConnectWalletFromUnity DELETED.");
+      }
     };
   }, [isUnityInstanceReadyInParent, buildUnityBridge, sendToUnity]);
 
 
   const handleIframeLoad = useCallback(() => {
-    console.log("[ParentPage] Iframe loaded (/index.html). Attempting to locate unityInstance in iframe's contentWindow.");
+    console.log("[ParentPage INFO] Iframe loaded (/index.html). Attempting to locate unityInstance in iframe's contentWindow.");
     setIsIframeLoading(false); 
 
     let attempts = 0;
-    const maxAttempts = 60; // Try for 30 seconds (60 * 500ms)
-    const interval = 500; // 500ms
+    const maxAttempts = 120; // Try for 60 seconds (120 * 500ms)
+    const interval = 500; 
 
     const checkForUnityInstance = () => {
       attempts++;
       if (iframeRef.current && iframeRef.current.contentWindow) {
         const iframeContentWindow = iframeRef.current.contentWindow as IframeUnityWindow;
+        console.log(`[ParentPage DEBUG] checkForUnityInstance attempt ${attempts}/${maxAttempts}. iframeContentWindow.unityInstance type: ${typeof iframeContentWindow.unityInstance}, SendMessage type: ${typeof iframeContentWindow.unityInstance?.SendMessage}`);
+        
         if (iframeContentWindow.unityInstance && typeof iframeContentWindow.unityInstance.SendMessage === 'function') {
-          console.log(`[ParentPage] unityInstance FOUND in iframe after ${attempts} attempts. Setting isUnityInstanceReadyInParent to true.`);
+          console.log(`[ParentPage SUCC] unityInstance FOUND in iframe after ${attempts} attempts. Setting isUnityInstanceReadyInParent to true.`);
           unityInstanceOnIframeRef.current = iframeContentWindow.unityInstance;
-          setIsUnityInstanceReadyInParent(true); // Parent now knows it can talk to Unity.
+          setIsUnityInstanceReadyInParent(true); 
           
-          // Now that Unity instance in iframe is confirmed, tell the Game (via SendMessage) that the *parent* page's JS bridge is set up and ready.
-          // This is important so Unity knows it can start calling functions like JsConnectWallet that rely on window.parent.unityBridge.
-          console.log("[ParentPage] Signaling to Unity (GameBridgeManager.OnUnityReady) that parent page bridge is set up.");
+          console.log("[ParentPage INFO] Signaling to Unity (GameBridgeManager.OnUnityReady) that parent page bridge is set up.");
           sendToUnity("GameBridgeManager", "OnUnityReady", {}); 
           return; 
         } else {
-          console.log(`[ParentPage] unityInstance not yet available in iframe (Attempt ${attempts}/${maxAttempts}). iframeContentWindow.unityInstance type: ${typeof iframeContentWindow.unityInstance}, SendMessage type: ${typeof iframeContentWindow.unityInstance?.SendMessage}`);
+          // console.log(`[ParentPage DEBUG] unityInstance not yet available in iframe (Attempt ${attempts}/${maxAttempts}).`);
         }
       } else {
-        console.warn(`[ParentPage] Iframe contentWindow not available (Attempt ${attempts}/${maxAttempts}). Cannot check for unityInstance.`);
+        console.warn(`[ParentPage WARN] Iframe contentWindow not available (Attempt ${attempts}/${maxAttempts}). Cannot check for unityInstance.`);
       }
 
       if (attempts < maxAttempts) {
         setTimeout(checkForUnityInstance, interval);
       } else {
-        console.error(`[ParentPage] Failed to find unityInstance in iframe after ${maxAttempts} attempts. Communication with Unity game will not work. Check iframe console for Unity loading errors.`);
+        console.error(`[ParentPage ERROR] Failed to find unityInstance in iframe after ${maxAttempts} attempts. Communication with Unity game will not work. Check iframe console for Unity loading errors.`);
         toast({title: "Game Communication Error", description: "Could not establish communication with the Unity game. Please check console (F12 -> inspect iframe) and try refreshing.", variant: "destructive", duration: 15000});
-        setIsUnityInstanceReadyInParent(false); // Ensure it's false
+        setIsUnityInstanceReadyInParent(false); 
       }
     };
 
-    setTimeout(checkForUnityInstance, interval); // Start checking after an initial delay
-  }, [sendToUnity, toast]); // Added sendToUnity and toast as dependencies
-
-  // Effect for Unity instance lifecycle (Quit on parent unmount)
-  // This useEffect should have an empty dependency array to run only on mount/unmount of HomePage.
-  useEffect(() => {
-    console.log('[ParentPage] HomePage component mounted. Iframe will be rendered.');
-    
-    return () => {
-      console.log("[ParentPage] HomePage unmounting. Attempting to quit Unity instance in iframe.");
-      if (unityInstanceOnIframeRef.current && typeof unityInstanceOnIframeRef.current.Quit === 'function') {
-        unityInstanceOnIframeRef.current.Quit().then(() => {
-          console.log("[ParentPage] Unity instance in iframe quit successfully.");
-        }).catch((err: any) => {
-          console.error("[ParentPage] Error quitting Unity instance in iframe:", err);
-        });
-      } else {
-        console.warn("[ParentPage] No Unity instance or Quit function found on iframe to call on unmount.");
-      }
-      unityInstanceOnIframeRef.current = null;
-      setIsUnityInstanceReadyInParent(false);
-      setIsIframeLoading(true); 
-      // window.unityBridge and callConnectWalletFromUnity are cleaned up by the other useEffect.
-    };
-  }, []); // Empty dependency array: runs only on mount and unmount of HomePage
+    setTimeout(checkForUnityInstance, interval); 
+  }, [sendToUnity, toast]); 
 
 
   const gameBaseNameOrDefault = UNITY_GAME_BUILD_BASE_NAME || "MyGame";
-  if (!UNITY_GAME_BUILD_BASE_NAME) {
-      console.warn(`[ParentPage] UNITY_GAME_BUILD_BASE_NAME is not set in config. Ensure NEXT_PUBLIC_UNITY_GAME_BUILD_BASE_NAME env var is set if you have a custom logo name. Defaulting to "MyGame" for logo path.`);
+  if (!process.env.NEXT_PUBLIC_UNITY_GAME_BUILD_BASE_NAME && UNITY_GAME_BUILD_BASE_NAME === "MyGame" ) {
+      console.warn(`[ParentPage WARN] UNITY_GAME_BUILD_BASE_NAME is using default "MyGame". Ensure NEXT_PUBLIC_UNITY_GAME_BUILD_BASE_NAME env var is set if you have a custom logo/game name, or if your Unity build files are named differently.`);
   }
 
   return (
@@ -591,7 +598,7 @@ export default function HomePage() {
         )}
         <iframe
             ref={iframeRef}
-            src="/index.html" // Points to public/index.html (Unity's output)
+            src="/index.html" 
             className={`w-full h-full border-0 ${isIframeLoading ? 'opacity-0' : 'opacity-100'} transition-opacity duration-500`}
             title="Unity Game"
             onLoad={handleIframeLoad}
