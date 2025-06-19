@@ -35,8 +35,6 @@ const ConnectWalletButton = dynamic(
 // Declare global functions for jslib to call
 declare global {
   interface Window {
-    // Functions exposed FOR jslib to call, now handled by react-unity-webgl event system or direct calls
-    // These are for methods called FROM Unity via jslib (e.g. JSConnectWallet() in C# calls JsConnectWallet in jslib)
     handleConnectWalletRequest?: () => void;
     handleIsWalletConnectedRequest?: () => boolean;
     handleGetPublicKeyRequest?: () => string | null;
@@ -57,13 +55,14 @@ declare global {
     handleWithdrawFundsRequest?: (tokenMintOrSol: string, grossAmount: number) => void;
     handleSetNetworkRequest?: (network: SupportedSolanaNetwork) => void;
     handleGetCurrentNetworkRequest?: () => SupportedSolanaNetwork;
-
-    // For direct call from Unity for connect wallet, if needed by C# DllImport __Internal to "callConnectWalletFromUnity"
-    callConnectWalletFromUnity?: () => void;
+    
+    // For react-unity-webgl, the Unity instance might be on window.unityInstance or via context
+    // We will rely on the useUnityContext hook for sending messages to Unity.
+    // Global functions called FROM jslib will be regular window.functionName calls.
   }
 }
 
-// Debounce function (if still needed for asset loading, otherwise can be removed)
+// Debounce function
 function debounce<F extends (...args: any[]) => Promise<any>>(func: F, waitFor: number) {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   return (...args: Parameters<F>): Promise<ReturnType<F>> => {
@@ -90,7 +89,7 @@ export default function HomePage() {
 
   const gameBaseNameOrDefault = UNITY_GAME_BUILD_BASE_NAME || "MyGame";
 
-  const { unityProvider, isLoaded, loadingProgression, sendMessage, addEventListener, removeEventListener } = useUnityContext({
+  const { unityProvider, isLoaded, loadingProgression, sendMessage, addEventListener, removeEventListener,UNSAFE__detachAndUnloadImmediate: detachAndUnload } = useUnityContext({
     loaderUrl: `/Build/${gameBaseNameOrDefault}.loader.js`,
     dataUrl: `/Build/${gameBaseNameOrDefault}.data`,
     frameworkUrl: `/Build/${gameBaseNameOrDefault}.framework.js`,
@@ -100,15 +99,11 @@ export default function HomePage() {
   const [nfts, setNfts] = useState<Nft[]>([]);
   const [cnfts, setCnfts] = useState<CNft[]>([]);
   const [tokens, setTokens] = useState<SplToken[]>([]);
-  const [_solBalance, _setSolBalance] = useState<number>(0);
+  const [_solBalance, _setSolBalance] = useState<number>(0); // Renamed to avoid conflict if solBalance is prop
   const [isLoadingAssets, setIsLoadingAssets] = useState(false);
   const [isSubmittingTransaction, setIsSubmittingTransaction] = useState(false);
   const [currentDevicePixelRatio, setCurrentDevicePixelRatio] = useState<number | undefined>(undefined);
-
-  useEffect(() => {
-    // This effect runs only on the client-side
-    setCurrentDevicePixelRatio(window.devicePixelRatio);
-  }, []);
+  const [isClientMounted, setIsClientMounted] = useState(false);
 
 
   // Refs for values that might be accessed in callbacks/effects
@@ -130,9 +125,15 @@ export default function HomePage() {
   useEffect(() => { rpcUrlRef.current = rpcUrl; }, [rpcUrl]);
   useEffect(() => { currentNetworkRef.current = currentNetwork; }, [currentNetwork]);
 
+  useEffect(() => {
+    setIsClientMounted(true);
+    // Set device pixel ratio only on client
+    setCurrentDevicePixelRatio(window.devicePixelRatio);
+  }, []);
+
   // Callback to send message to Unity - using react-unity-webgl's sendMessage
   const sendToUnityGame = useCallback((gameObjectName: string, methodName: string, message: any) => {
-    if (isLoaded) {
+    if (isLoaded) { // isLoaded comes from useUnityContext
       const replacer = (key: string, value: any) => (typeof value === 'bigint' ? value.toString() : value);
       const msgStr = typeof message === 'object' ? JSON.stringify(message, replacer) : String(message);
       try {
@@ -142,7 +143,7 @@ export default function HomePage() {
         console.error(`[Page RUW] Error sending message to Unity: ${gameObjectName}.${methodName}`, e, "Message was:", message);
       }
     } else {
-      console.warn(`[Page RUW] sendToUnityGame: Unity not loaded. Cannot send. IsLoaded: ${isLoaded}.`);
+      console.warn(`[Page RUW] sendToUnityGame: Unity not loaded or ready. Cannot send. isLoaded: ${isLoaded}.`);
     }
   }, [isLoaded, sendMessage]);
 
@@ -213,18 +214,18 @@ export default function HomePage() {
 
   const debouncedLoadUserAssets = useMemo(() => debounce(loadUserAssetsInternal, 500), [loadUserAssetsInternal]);
 
-  // Effect for Wallet Status and Asset Loading, dependent on react-unity-webgl's isLoaded
+  // Effect for Wallet Status and Asset Loading
   useEffect(() => {
     if (!isLoaded) {
-      console.log("[Page RUW WalletEffect] Unity not ready via react-unity-webgl, skipping asset load/wallet status update to Unity.");
+      console.log("[Page RUW WalletEffect] Unity not ready (isLoaded is false), skipping asset load/wallet status update to Unity.");
       return;
     }
     if (connected && publicKey && rpcUrlRef.current && connection && walletHook) {
-      console.log("[Page RUW WalletEffect] Wallet connected AND Unity ready (via RUW). Sending OnWalletConnected to Unity and loading assets.");
+      console.log("[Page RUW WalletEffect] Wallet connected AND Unity ready. Sending OnWalletConnected to Unity and loading assets.");
       sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: publicKey.toBase58() });
       debouncedLoadUserAssets(publicKey, rpcUrlRef.current, connection, walletHook);
     } else if (!connected && isLoaded) {
-      console.log("[Page RUW WalletEffect] Wallet disconnected AND Unity ready (via RUW). Sending OnWalletDisconnected to Unity.");
+      console.log("[Page RUW WalletEffect] Wallet disconnected AND Unity ready. Sending OnWalletDisconnected to Unity.");
       sendToUnityGame("GameBridgeManager", "OnWalletDisconnected", {});
       setNfts([]); setCnfts([]); setTokens([]); _setSolBalance(0);
     }
@@ -261,7 +262,6 @@ export default function HomePage() {
       try {
         console.log("[Page RUW Global] Attempting wallet connection via adapter...");
         await connectWalletAdapter();
-        // OnWalletConnected will be sent by the main useEffect dependent on 'connected' and 'isLoaded'
       } catch (error: any) {
         sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: error.message, details: error.name, action: "connect_wallet_attempt" });
         toast({ title: "Wallet Connection Error", description: `${error.name}: ${error.message}`, variant: "destructive" });
@@ -282,7 +282,6 @@ export default function HomePage() {
     window.handleDisconnectWalletRequest = async () => {
       try {
         await disconnectWalletAdapter();
-        // OnWalletDisconnected will be sent by the main useEffect dependent on 'connected' and 'isLoaded'
       } catch (error: any) {
         sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: error.message, action: "disconnect_wallet" });
       }
@@ -342,7 +341,7 @@ export default function HomePage() {
         sendToUnityGame("GameBridgeManager", "OnTransactionSubmitted", { action: actionName, signature, mint, explorerUrl: getTransactionExplorerUrl(signature, currentNetworkRef.current) });
         if (reloadAssets && walletHook.publicKey && rpcUrlRef.current && connection && walletHook) {
             debouncedLoadUserAssets(walletHook.publicKey, rpcUrlRef.current, connection, walletHook);
-        } else if (actionName === 'transfer_sol' || actionName === 'burn_sol') {
+        } else if (actionName === 'transfer_sol' || actionName === 'burn_sol' || actionName === 'deposit_sol') {
             if (walletHook.publicKey && connection) fetchSolBalanceInternal(walletHook.publicKey, connection);
         }
       } catch (error: any) { toast({ title: `${actionName.replace(/_/g, ' ')} Failed`, description: error.message, variant: "destructive" }); sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: actionName, error: error.message, mint });
@@ -397,7 +396,7 @@ export default function HomePage() {
         if (!CUSTODIAL_WALLET_ADDRESS) { sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: "deposit_funds", error: "Custodial address not set", tokenMint: tokenMintOrSol }); return; }
         if (amount <= 0) { sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: "deposit_funds", error: "Amount must be positive", tokenMint: tokenMintOrSol }); return; }
         if (tokenMintOrSol.toUpperCase() === "SOL") {
-            performTransaction("deposit_funds", "SOL", () => depositSol(connection, walletHook, amount, CUSTODIAL_WALLET_ADDRESS));
+            performTransaction("deposit_funds", "SOL", () => depositSol(connection, walletHook, amount, CUSTODIAL_WALLET_ADDRESS), false);
         } else {
             const token = tokensRef.current.find(t => t.id === tokenMintOrSol);
             if (!token) { sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: "deposit_funds", error: "Token not found for deposit", tokenMint: tokenMintOrSol }); return; }
@@ -417,8 +416,12 @@ export default function HomePage() {
           if (!token) { throw new Error("Token details for withdrawal not found."); }
           result = await initiateWithdrawalRequest(walletHook.publicKey.toBase58(), grossAmount, currentNetworkRef.current, token);
         }
-        if (result.success) toast({ title: "Withdrawal Processed", description: result.signature ? `Sig: ${result.signature.substring(0,10)}...` : result.message, action: result.signature ? <a href={getTransactionExplorerUrl(result.signature, currentNetworkRef.current)} target="_blank" rel="noopener noreferrer">View</a> : undefined });
-        else toast({ title: "Withdrawal Failed", description: result.message, variant: "destructive" });
+        if (result.success) {
+          toast({ title: "Withdrawal Processed", description: result.signature ? `Sig: ${result.signature.substring(0,10)}...` : result.message, action: result.signature ? <a href={getTransactionExplorerUrl(result.signature, currentNetworkRef.current)} target="_blank" rel="noopener noreferrer">View</a> : undefined });
+          if (walletHook.publicKey && connection) fetchSolBalanceInternal(walletHook.publicKey, connection); // Refresh SOL balance after any withdrawal
+        } else {
+          toast({ title: "Withdrawal Failed", description: result.message, variant: "destructive" });
+        }
         sendToUnityGame("GameBridgeManager", "OnWithdrawalResponse", { ...result, action: "withdraw_funds", tokenMint: tokenMintOrSol, explorerUrl: result.signature ? getTransactionExplorerUrl(result.signature, currentNetworkRef.current) : undefined });
       } catch (error: any) { toast({ title: "Withdrawal Request Error", description: error.message, variant: "destructive" }); sendToUnityGame("GameBridgeManager", "OnWithdrawalResponse", { success: false, message: error.message, error: error.message, action: "withdraw_funds", tokenMint: tokenMintOrSol });
       } finally { setIsSubmittingTransaction(false); sendToUnityGame("GameBridgeManager", "OnTransactionSubmitting", { action: "withdraw_funds", submitting: false, tokenMint: tokenMintOrSol }); }
@@ -433,28 +436,47 @@ export default function HomePage() {
         return currentNetworkRef.current;
     };
 
-    // Also set up direct connect wallet for Unity if it uses a DllImport to "callConnectWalletFromUnity"
-    window.callConnectWalletFromUnity = window.handleConnectWalletRequest;
-
     // react-unity-webgl event listeners (these are for events sent FROM Unity to React using the library's system)
-    // Example: If Unity sends an event named "UnityReady"
-    const handleUnityIsActuallyReady = (message?: string) => { // Message is optional
-      console.log("[Page RUW Listener] Unity sent 'UnityReady' event (via RUW addEventListener). Message:", message);
-      // This could be an alternative place to signal Unity is fully interactive.
-      // The `isLoaded` from useUnityContext signals loader.js is done, but this confirms game logic readiness.
-      // If you use this, ensure your Unity game sends this event at the appropriate time.
-      // For now, our primary "Unity is ready" for bridge setup is `isLoaded` from useUnityContext.
-      // However, if GameBridgeManager in C# sends "OnUnityReady" at its Start(), this could hook into it.
-       sendToUnityGame("GameBridgeManager", "OnUnityReady", {}); // Acknowledge back if needed or simply log
+    // These should align with the names Unity uses to send events. GameBridgeManager in Unity should use these exact names.
+    
+    const handleUnityReadyEvent = (message?: string) => { // From GameBridgeManager C# via SendMessageToReact("OnUnityReady", "{}")
+      console.log("[Page RUW Listener] Unity sent 'OnUnityReady' event (via RUW addEventListener). Message:", message);
+      sendToUnityGame("GameBridgeManager", "OnUnityReady", {}); // Acknowledge if needed, or this confirms web is listening.
     };
-    addEventListener("UnityReady", handleUnityIsActuallyReady);
+    const handleWalletConnectedEventFromUnity = (jsonData: string) => {
+      console.log("[Page RUW Listener] Unity sent 'OnWalletConnectedEventFromUnity'. Data:", jsonData);
+      // This is if Unity needs to *tell* React it thinks a wallet connected. Usually React tells Unity.
+    };
+    const handleWalletDisconnectedEventFromUnity = (jsonData: string) => {
+      console.log("[Page RUW Listener] Unity sent 'OnWalletDisconnectedEventFromUnity'. Data:", jsonData);
+    };
 
 
-    // This is an important signal for the GameBridgeManager C# script
+    // Add react-unity-webgl event listeners
+    // IMPORTANT: The event names like "OnUnityReady" must exactly match
+    // what Unity's GameBridgeManager (or other C# scripts) use when they call SendMessageToReact (from jslib).
+    // For example, if GameBridgeManager.cs calls unityInstance.SendMessageToReact("MyCustomEvent", "data"),
+    // then you would listen for "MyCustomEvent" here.
+    // The current GameBridgeManager.cs in the docs implies it expects the web to call *its* methods (e.g., OnWalletConnected).
+    // So, we need to confirm if Unity is *also* sending events to React this way.
+    // Assuming GameBridgeManager is set up to receive messages (which it is), direct calls via `sendToUnityGame`
+    // are the primary communication FROM React TO Unity.
+    // For Unity to React, the jslib calls window.handle... functions. Event listeners here are for
+    // if Unity used `SendMessageToReact` from jslib.
+
     if (isLoaded) {
-      console.log("[Page RUW BridgeEffect] RUW isLoaded is true. Signaling OnUnityReady to GameBridgeManager (C#).");
+      // This confirms that JS can call C# via sendMessage.
+      // Tell GameBridgeManager C# that the web page's JS bridge (global handlers) is ready to receive calls.
+      console.log("[Page RUW BridgeEffect] RUW isLoaded is true. Signaling 'OnUnityReady' to GameBridgeManager C# (which means JS bridge is up).");
       sendToUnityGame("GameBridgeManager", "OnUnityReady", {});
     }
+    
+    // Example: if Unity's C# script GameBridgeManager calls jslib SendMessageToReact("OnGameBridgeManagerReady", "{}")
+    const handleGameBridgeManagerReady = () => {
+      console.log("[Page RUW Listener] Received 'OnGameBridgeManagerReady' from Unity.");
+      // Now you know GameBridgeManager in Unity is initialized and has potentially subscribed to events via the jslib.
+    };
+    addEventListener("OnGameBridgeManagerReady", handleGameBridgeManagerReady);
 
 
     return () => {
@@ -462,31 +484,42 @@ export default function HomePage() {
       // Clean up global functions
       delete window.handleConnectWalletRequest;
       delete window.handleIsWalletConnectedRequest;
-      // ... delete all other window.handle... functions
-      delete window.callConnectWalletFromUnity;
+      delete window.handleGetPublicKeyRequest;
+      delete window.handleDisconnectWalletRequest;
+      delete window.handleGetAvailableWalletsRequest;
+      delete window.handleSelectWalletRequest;
+      delete window.handleGetUserNFTsRequest;
+      delete window.handleGetUserTokensRequest;
+      delete window.handleGetSolBalanceRequest;
+      delete window.handleTransferSOLRequest;
+      delete window.handleTransferTokenRequest;
+      delete window.handleTransferNFTRequest;
+      delete window.handleBurnSOLRequest;
+      delete window.handleBurnAssetRequest;
+      delete window.handleMintNFTRequest;
+      delete window.handleSwapTokensRequest;
+      delete window.handleDepositFundsRequest;
+      delete window.handleWithdrawFundsRequest;
+      delete window.handleSetNetworkRequest;
+      delete window.handleGetCurrentNetworkRequest;
 
-      removeEventListener("UnityReady", handleUnityIsActuallyReady);
+      // Remove react-unity-webgl event listeners
+      removeEventListener("OnGameBridgeManagerReady", handleGameBridgeManagerReady);
+      
+       // Gracefully quit Unity instance
+      if (isLoaded && detachAndUnload) {
+        console.log("[Page RUW Cleanup] Detaching and unloading Unity instance.");
+        detachAndUnload().catch(error => {
+          console.error("[Page RUW Cleanup] Error detaching and unloading Unity instance:", error);
+        });
+      }
     };
   }, [
       isLoaded, walletHook, connection, walletModal, connectWalletAdapter, disconnectWalletAdapter, select, availableWallets,
       sendToUnityGame, toast, fetchSolBalanceInternal, debouncedLoadUserAssets, setCurrentNetwork,
-      addEventListener, removeEventListener, // from useUnityContext
-      // Add other dependencies for global handlers if they directly use state/props not covered by refs
+      addEventListener, removeEventListener, detachAndUnload, // from useUnityContext
   ]);
 
-
-  // Cleanup for react-unity-webgl (though it manages its own instance lifecycle internally)
-  // The `quit()` method is not typically called directly unless you want to force unload.
-  // The library handles unmounting.
-  /*
-  useEffect(() => {
-    return () => {
-      // If you needed to manually quit the Unity instance on component unmount with react-unity-webgl
-      // This is usually not necessary as the library handles it.
-      // if (unityContext.quit) unityContext.quit();
-    };
-  }, [unityContext]);
-  */
 
   const loadingPercentage = Math.round(loadingProgression * 100);
 
@@ -500,7 +533,15 @@ export default function HomePage() {
       </header>
 
       <main className="flex-1 w-full relative overflow-hidden p-0 m-0">
-        {!isLoaded && (
+        {!isClientMounted ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-background z-50">
+                 <svg className="animate-spin h-12 w-12 text-primary mx-auto mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <p className="text-lg text-foreground">Initializing Game Engine...</p>
+            </div>
+        ) : !isLoaded ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-background z-50">
              <div className="w-60 h-60 mb-4">
                 <img
@@ -524,17 +565,18 @@ export default function HomePage() {
              )}
               <p className="text-xs text-muted-foreground mt-2 px-4 text-center">If stuck, check browser console (F12) for errors.</p>
           </div>
+        ) : null}
+        {isClientMounted && (
+            <Unity
+                id="react-unity-webgl-canvas" // Assign a static ID if possible/helpful for the library
+                unityProvider={unityProvider}
+                className={`w-full h-full block ${!isLoaded ? 'opacity-0' : 'opacity-100'} transition-opacity duration-500`}
+                style={{ background: 'transparent' }}
+                devicePixelRatio={currentDevicePixelRatio}
+                suppressHydrationWarning // Added to attempt to suppress specific canvas ID mismatch
+            />
         )}
-        <Unity
-            unityProvider={unityProvider}
-            className={`w-full h-full block ${!isLoaded ? 'opacity-0' : 'opacity-100'} transition-opacity duration-500`}
-            style={{ background: 'transparent' }}
-            devicePixelRatio={currentDevicePixelRatio} // Use state variable here
-        />
       </main>
     </div>
   );
 }
-
-
-    
