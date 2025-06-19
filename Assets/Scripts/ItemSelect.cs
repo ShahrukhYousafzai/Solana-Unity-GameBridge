@@ -198,8 +198,9 @@ public class ItemSelect : MonoBehaviour
 
         canAnim = true;
         
-        if (itemsPrice.Length > id) CurentValue.text = itemsPrice[id].ToString();
-        else if (itemsPrice.Length > 0) CurentValue.text = itemsPrice[0].ToString();
+        if (itemsPrice.Length > id && id >=0 && CurentValue != null) CurentValue.text = itemsPrice[id].ToString();
+        else if (itemsPrice.Length > 0 && CurentValue != null) CurentValue.text = itemsPrice[0].ToString();
+
 
         if (itemType == ItemType.Car) InitializeSeason();
         
@@ -427,7 +428,7 @@ public class ItemSelect : MonoBehaviour
                 if (burnStatusText != null)
                 {
                     BridgeUnityCNft burnedBooster = ownedBoosterNFTs.Find(b => b.id == result.mint);
-                    burnStatusText.text = $"Burned: {(burnedBooster != null ? burnedBooster.name : result.mint.Substring(0,6)+"...")}";
+                    burnStatusText.text = $"Burned: {(burnedBooster != null ? burnedBooster.name : result.mint.Substring(0,Math.Min(6, result.mint.Length))+"...")}";
                     burnStatusText.color = Color.green;
                 }
                 ownedBoosterNFTs.RemoveAll(b => b.id == result.mint);
@@ -436,10 +437,14 @@ public class ItemSelect : MonoBehaviour
                 UpdateBoostMultiplier();
                 SaveNFTData();
             }
+             else if (result == null)
+            {
+                Debug.LogWarning("ItemSelect: HandleAssetBurnSuccess: Parsed result was null. JSON: " + jsonData);
+            }
         }
         catch (Exception e)
         {
-            Debug.LogError("ItemSelect: Error parsing burn success JSON: " + e.Message);
+            Debug.LogError("ItemSelect: Error parsing burn success JSON: " + e.Message + ". JSON: " + jsonData);
         }
     }
     
@@ -454,14 +459,18 @@ public class ItemSelect : MonoBehaviour
                 Debug.LogError($"Failed to burn asset {result.mint}: {result.error} - {result.message}");
                 if (burnStatusText != null)
                 {
-                    burnStatusText.text = $"Burn Failed: {result.mint?.Substring(0,6)+"..."} - {result.error}";
+                    burnStatusText.text = $"Burn Failed: {(string.IsNullOrEmpty(result.mint) ? "Unknown" : result.mint.Substring(0,Math.Min(6, result.mint.Length))+"...")} - {result.error}";
                     burnStatusText.color = Color.red;
                 }
+            }
+            else if (result == null)
+            {
+                 Debug.LogWarning("ItemSelect: HandleAssetBurnError: Parsed result was null. JSON: " + jsonData);
             }
         }
         catch (Exception e)
         {
-            Debug.LogError("ItemSelect: Error parsing burn error JSON: " + e.Message);
+            Debug.LogError("ItemSelect: Error parsing burn error JSON: " + e.Message + ". JSON: " + jsonData);
         }
     }
 
@@ -668,7 +677,13 @@ public class ItemSelect : MonoBehaviour
             }
             GameObject boosterUI = Instantiate(boosterNFTPrefab, scrollRectContent);
             Image boosterImage = boosterUI.GetComponentInChildren<Image>(); 
-            if(boosterImage == null) boosterImage = boosterUI.GetComponent<Image>(); 
+            if(boosterImage == null) {
+                 boosterImage = boosterUI.GetComponent<Image>(); // Fallback if not in children
+            }
+             if(boosterImage == null) { // Still null? Log error and skip image part
+                Debug.LogError($"ItemSelect: Booster UI for '{booster.name}' missing Image component. Ensure prefab is correctly set up with an Image component on the root or a child.");
+            }
+
 
             string boosterName = booster.name;
 
@@ -691,11 +706,9 @@ public class ItemSelect : MonoBehaviour
             }
             else Debug.LogWarning("Booster UI Prefab missing Button component.");
             
-            if (boosterImage != null)
+            if (boosterImage != null) // Check again if it was found
             {
                 StartCoroutine(LoadBoosterImage(booster, boosterImage));
-            } else {
-                 Debug.LogWarning($"Booster UI for {boosterName} missing Image component. Ensure prefab is correctly set up.");
             }
         }
         UpdateBoostMultiplier(); 
@@ -720,6 +733,12 @@ public class ItemSelect : MonoBehaviour
             else Debug.LogWarning($"[LoadBoosterImage] Fallback sprite for '{booster.name}' is not assigned.");
             yield break;
         }
+
+        // Explicitly log if it's a known placeholder domain to avoid confusion with real images
+        if (imageUrl.Contains("placehold.co") || imageUrl.Contains("via.placeholder.com")) {
+             Debug.Log($"[LoadBoosterImage] Using placeholder image URL directly: {imageUrl} for booster '{booster.name}'");
+        }
+
 
         using (UnityEngine.Networking.UnityWebRequest imageRequest = UnityEngine.Networking.UnityWebRequestTexture.GetTexture(imageUrl))
         {
@@ -1005,5 +1024,5 @@ public class ItemSelect : MonoBehaviour
         return totalBoost;
     }
 }
-    
 
+    
