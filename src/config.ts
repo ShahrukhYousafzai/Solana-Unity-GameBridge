@@ -21,6 +21,11 @@ export const CUSTODIAL_WALLET_PRIVATE_KEY_FOR_SERVER = process.env.CUSTODIAL_WAL
 // Unity will generate files like YourGameName.loader.js, YourGameName.data, etc.
 export const UNITY_GAME_BUILD_BASE_NAME = process.env.NEXT_PUBLIC_UNITY_GAME_BUILD_BASE_NAME || "MyGame";
 
+// Unity WebGL build configuration details for react-unity-webgl
+export const UNITY_COMPANY_NAME = process.env.NEXT_PUBLIC_UNITY_COMPANY_NAME || "DefaultCompany";
+export const UNITY_PRODUCT_NAME = process.env.NEXT_PUBLIC_UNITY_PRODUCT_NAME || UNITY_GAME_BUILD_BASE_NAME || "MyUnityGame";
+export const UNITY_PRODUCT_VERSION = process.env.NEXT_PUBLIC_UNITY_PRODUCT_VERSION || "1.0";
+
 
 export type SupportedSolanaNetwork = 'mainnet-beta' | 'devnet' | 'testnet';
 
@@ -53,4 +58,3 @@ export const getRpcUrl = (network: SupportedSolanaNetwork, apiKey: string | unde
 export const SOL_BURN_ADDRESS = "1nc1nerator11111111111111111111111111111111";
 export const SOL_DECIMALS = 9;
 export const WITHDRAWAL_TAX_PERCENTAGE = 5; // 5%
-
