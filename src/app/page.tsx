@@ -662,7 +662,7 @@ export default function HomePage() {
           <div className="flex-1 flex justify-center">
             {isClientMounted && (
               <Image
-                src="/Build/Logo.png" 
+                src="/Logo.png" 
                 alt={`${gameProductNameOrDefault} Logo`}
                 width={40} 
                 height={40} 
@@ -692,7 +692,7 @@ export default function HomePage() {
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-background z-50">
              <div className="w-60 h-60 mb-4">
                 <Image
-                     src="/Build/Logo.png" 
+                     src="/Logo.png" 
                      alt="Game Logo"
                      width={240}
                      height={240}
