@@ -695,54 +695,69 @@ public class ItemSelect : MonoBehaviour
             {
                 StartCoroutine(LoadBoosterImage(booster, boosterImage));
             } else {
-                 Debug.LogWarning($"Booster UI for {boosterName} missing Image component.");
+                 Debug.LogWarning($"Booster UI for {boosterName} missing Image component. Ensure prefab is correctly set up.");
             }
         }
         UpdateBoostMultiplier(); 
         SaveNFTData(); 
     }
 
-    IEnumerator LoadBoosterImage(BridgeUnityCNft booster, Image targetImage) 
+    IEnumerator LoadBoosterImage(BridgeUnityCNft booster, Image targetImage)
     {
         string imageUrl = booster.imageUrl;
+        Debug.Log($"[LoadBoosterImage] Attempting to load image for booster '{booster.name}' from URL: {imageUrl}");
 
-        if (string.IsNullOrEmpty(imageUrl))
+        if (targetImage == null)
         {
-            if (fallbackSprite != null) SetSpriteToTarget(targetImage, fallbackSprite);
-            else Debug.LogWarning("Fallback sprite is not assigned.");
+            Debug.LogError($"[LoadBoosterImage] Target Image component for booster '{booster.name}' is null. Cannot load image.");
             yield break;
         }
 
-        if (imageUrl.Contains("placehold.co") || imageUrl.Contains("via.placeholder.com")) {
-             Debug.Log($"ItemSelect: Using placeholder image URL directly: {imageUrl}");
+        if (string.IsNullOrEmpty(imageUrl))
+        {
+            Debug.LogWarning($"[LoadBoosterImage] Image URL for '{booster.name}' is null or empty.");
+            if (fallbackSprite != null) SetSpriteToTarget(targetImage, fallbackSprite);
+            else Debug.LogWarning($"[LoadBoosterImage] Fallback sprite for '{booster.name}' is not assigned.");
+            yield break;
         }
-
 
         using (UnityEngine.Networking.UnityWebRequest imageRequest = UnityEngine.Networking.UnityWebRequestTexture.GetTexture(imageUrl))
         {
+            Debug.Log($"[LoadBoosterImage] Sending web request for: {imageUrl} (Booster: {booster.name})");
             yield return imageRequest.SendWebRequest();
 
             if (imageRequest.result == UnityEngine.Networking.UnityWebRequest.Result.Success)
             {
+                Debug.Log($"[LoadBoosterImage] Successfully downloaded image data for: {imageUrl} (Booster: {booster.name})");
                 Texture2D texture = UnityEngine.Networking.DownloadHandlerTexture.GetContent(imageRequest);
                 if (texture != null)
                 {
+                    Debug.Log($"[LoadBoosterImage] Texture created successfully for {imageUrl}. Width: {texture.width}, Height: {texture.height} (Booster: {booster.name})");
                     Sprite sprite = Sprite.Create(
                         texture,
                         new Rect(0, 0, texture.width, texture.height),
                         Vector2.one * 0.5f
                     );
-                    SetSpriteToTarget(targetImage, sprite);
+                    if (sprite != null)
+                    {
+                        Debug.Log($"[LoadBoosterImage] Sprite created successfully for {imageUrl}. Assigning to target. (Booster: {booster.name})");
+                        SetSpriteToTarget(targetImage, sprite);
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"[LoadBoosterImage] Sprite.Create returned null for {imageUrl}. Applying fallback. (Booster: {booster.name})");
+                        if (fallbackSprite != null) SetSpriteToTarget(targetImage, fallbackSprite);
+                    }
                 }
                 else
                 {
-                    Debug.LogWarning($"Texture is null after downloading image: {imageUrl}");
+                    Debug.LogWarning($"[LoadBoosterImage] Texture is null after downloading image: {imageUrl}. Applying fallback. (Booster: {booster.name})");
                     if (fallbackSprite != null) SetSpriteToTarget(targetImage, fallbackSprite);
                 }
             }
             else
             {
-                Debug.LogWarning($"Failed to load booster image: {imageUrl}. Error: {imageRequest.error}");
+                Debug.LogWarning($"[LoadBoosterImage] Failed to load booster image: {imageUrl}. Error: {imageRequest.error}, Result: {imageRequest.result}. Applying fallback. (Booster: {booster.name})");
                 if (fallbackSprite != null) SetSpriteToTarget(targetImage, fallbackSprite);
             }
         }
@@ -751,9 +766,10 @@ public class ItemSelect : MonoBehaviour
 
     void SetSpriteToTarget(Image target, Sprite sprite)
     {
-        if (target == null) { Debug.LogError("SetSpriteToTarget: target Image is null."); return; }
+        if (target == null) { Debug.LogError("SetSpriteToTarget: target Image component is null."); return; }
         if (sprite == null) { Debug.LogError("SetSpriteToTarget: sprite is null."); return; }
         target.sprite = sprite;
+        Debug.Log($"SetSpriteToTarget: Successfully assigned sprite '{sprite.name}' to Image '{target.gameObject.name}'.");
     }
 
     bool IsNFTUnlocked(string carName) 
@@ -989,3 +1005,5 @@ public class ItemSelect : MonoBehaviour
         return totalBoost;
     }
 }
+
+    
