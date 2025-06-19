@@ -231,7 +231,6 @@ export default function HomePage() {
           console.log("[ParentPage Bridge] Attempting wallet connection via adapter...");
           await connectWalletAdapter(); 
           console.log("[ParentPage Bridge] connectWalletAdapter call completed.");
-          // OnWalletConnected is sent via the main useEffect watching `connected` state
         } catch (error: any) {
           console.error("[ParentPage Bridge] Error during connectWalletAdapter:", error);
           sendToUnity("GameBridgeManager", "OnWalletConnectionError", { error: error.message, details: error.name, action: "connect_wallet_attempt" });
@@ -256,7 +255,6 @@ export default function HomePage() {
         try {
           await disconnectWalletAdapter();
           console.log("[ParentPage Bridge] disconnectWalletAdapter call completed.");
-          // OnWalletDisconnected is sent via the main useEffect watching `connected` state
         } catch (error: any) {
           console.error("[ParentPage Bridge] Error during disconnectWalletAdapter:", error);
           sendToUnity("GameBridgeManager", "OnWalletConnectionError", { error: error.message, action: "disconnect_wallet" });
@@ -599,7 +597,6 @@ export default function HomePage() {
     const intervalTime = 500; 
     const logInterval = 10; // Log every 5 seconds (10 attempts * 500ms)
 
-    // Clear any existing interval
     if (checkForUnityInstanceIntervalId.current) {
         clearInterval(checkForUnityInstanceIntervalId.current);
     }
@@ -614,7 +611,7 @@ export default function HomePage() {
             clearInterval(checkForUnityInstanceIntervalId.current);
             checkForUnityInstanceIntervalId.current = null;
           }
-          console.log(`[ParentPage SUCC] unityInstance FOUND in iframe after ${attempts} attempts (approx ${attempts * intervalTime / 1000}s). Setting isUnityInstanceReadyInParent to true. Unity instance:`, iframeContentWindow.unityInstance);
+          console.log(`[ParentPage SUCC] unityInstance FOUND in iframe after ${attempts} attempts (approx ${attempts * intervalTime / 1000}s). Setting isUnityInstanceReadyInParent to true. Unity instance keys: ${iframeContentWindow.unityInstance ? Object.keys(iframeContentWindow.unityInstance).join(', ') : 'N/A'}`);
           unityInstanceOnIframeRef.current = iframeContentWindow.unityInstance;
           setIsUnityInstanceReadyInParent(true); 
           
@@ -624,10 +621,10 @@ export default function HomePage() {
         } else {
             if (attempts === 1 || (attempts % logInterval === 0) ) {
                 console.log(`[ParentPage Polling Attempt ${attempts}] unityInstance not yet available in iframe. Retrying... iframeContentWindow exists: ${!!iframeContentWindow}. unityInstance type: ${typeof iframeContentWindow.unityInstance}. SendMessage type: ${typeof iframeContentWindow.unityInstance?.SendMessage}`);
-                 if (iframeContentWindow && typeof iframeContentWindow === 'object' && (attempts % (logInterval * 2) === 0 || attempts === 1 )) { // Log keys less frequently
+                 if (iframeContentWindow && typeof iframeContentWindow === 'object' && (attempts % (logInterval * 2) === 0 || attempts === 1 )) { 
                     const keys = Object.keys(iframeContentWindow);
                     if (keys.includes("unityInstance")) {
-                        console.log(`[ParentPage Polling Attempt ${attempts}] 'unityInstance' key FOUND on iframeContentWindow. Value:`, iframeContentWindow.unityInstance);
+                        console.log(`[ParentPage Polling Attempt ${attempts}] 'unityInstance' key FOUND on iframeContentWindow. Value:`, iframeContentWindow.unityInstance, `Keys of unityInstance: ${iframeContentWindow.unityInstance ? Object.keys(iframeContentWindow.unityInstance).join(', ') : 'N/A'}`);
                     } else {
                         console.warn(`[ParentPage Polling Attempt ${attempts}] 'unityInstance' key NOT found. Available keys on iframe's window (sample): ${keys.slice(0, 20).join(', ')}... Total keys: ${keys.length}`);
                     }
@@ -639,13 +636,11 @@ export default function HomePage() {
             console.warn(`[ParentPage Polling Attempt ${attempts}] Iframe or contentWindow not available. iframeRef.current: ${!!iframeRef.current}, iframeRef.current.contentWindow: ${!!iframeRef.current?.contentWindow}. Cannot check for unityInstance.`);
         }
       }
-      // No longer stopping after maxAttempts, will poll indefinitely
     };
     
-    // Start the indefinite polling
     checkForUnityInstanceIntervalId.current = setInterval(checkForUnityInstance, intervalTime);
 
-  }, [sendToUnity, toast]); // Added toast to dependencies
+  }, [sendToUnity, toast]); 
 
 
   const gameBaseNameOrDefault = UNITY_GAME_BUILD_BASE_NAME || "MyGame";
@@ -686,12 +681,13 @@ export default function HomePage() {
           </div>
         )}
         <iframe
+            id="unity-iframe"
             ref={iframeRef}
             src="/index.html" 
             className={`w-full h-full border-0 ${isIframeLoading ? 'opacity-0' : 'opacity-100'} transition-opacity duration-500`}
             title="Unity Game"
             onLoad={handleIframeLoad}
-            sandbox="allow-scripts allow-same-origin allow-pointer-lock" 
+            sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-popups allow-modals" 
             allowFullScreen 
         ></iframe>
       </main>
