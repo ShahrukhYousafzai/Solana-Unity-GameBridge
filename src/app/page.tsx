@@ -240,11 +240,12 @@ export default function HomePage() {
     }
   
     if (connected && currentPkString) {
-      console.log(`[Page RUW WalletEffect] Wallet IS connected (PK: ${currentPkString}). Sending OnWalletConnected.`);
-      if (isLoaded) { 
-        sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: currentPkString });
+      if (prevConnectedForUnityRef.current !== true || prevPublicKeyForUnityRef.current !== currentPkString) {
+          console.log(`[Page RUW WalletEffect] Wallet connected (PK: ${currentPkString}). Sending OnWalletConnected.`);
+          if (isLoaded) { 
+            sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: currentPkString });
+          }
       }
-      // Asset loading is now handled by a separate effect
     } else { 
       if (prevConnectedForUnityRef.current === true && !connected) {
         console.log(`[Page RUW WalletEffect] Wallet transitioned to disconnected. Sending OnWalletDisconnected. PrevConnected: ${prevConnectedForUnityRef.current}, NowConnected: ${connected}`);
@@ -258,37 +259,35 @@ export default function HomePage() {
     prevPublicKeyForUnityRef.current = currentPkString;
   }, [walletHookRef.current.connected, walletHookRef.current.publicKey, isLoaded, sendToUnityGame, isClientMounted]);
   
-  // Effect to load assets when wallet is connected
-  useEffect(() => {
-    if (walletHook.connected && walletHook.publicKey && !isLoadingAssets && !isSubmittingTransactionRef.current) {
-      console.log("[Page RUW AssetEffect] Wallet connected, not loading/submitting. Triggering asset load.");
-      debouncedLoadUserAssets();
-    }
-  }, [walletHook.connected, walletHook.publicKey, isLoadingAssets, isSubmittingTransaction, debouncedLoadUserAssets]);
-
-
+  
   // Effect to reload page on wallet disconnect
   const prevConnectedStateForRefreshRef = useRef<boolean>(walletHook.connected);
+  const prevPublicKeyForRefreshRef = useRef<string | null>(walletHook.publicKey?.toBase58() || null);
   const disconnectReloadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    const { connected } = walletHookRef.current;
+    const { connected, publicKey } = walletHookRef.current;
+    const currentPkString = publicKey?.toBase58() || null;
 
     if (disconnectReloadTimeoutRef.current) {
       clearTimeout(disconnectReloadTimeoutRef.current);
       disconnectReloadTimeoutRef.current = null;
     }
+    
+    const wasPreviouslyConnectedWithPK = prevConnectedStateForRefreshRef.current === true && prevPublicKeyForRefreshRef.current !== null;
+    const isNowFullyDisconnected = !connected && currentPkString === null;
 
-    if (prevConnectedStateForRefreshRef.current === true && !connected) {
-      console.log("[Page RUW DisconnectRefreshEffect] Wallet has transitioned from connected to disconnected. Scheduling page reload.");
+    if (wasPreviouslyConnectedWithPK && isNowFullyDisconnected) {
+      console.log("[Page RUW DisconnectRefreshEffect] Wallet has transitioned from connected to fully disconnected. Scheduling page reload.");
       disconnectReloadTimeoutRef.current = setTimeout(() => {
         console.log("[Page RUW DisconnectRefreshEffect] Executing scheduled reload due to persistent disconnection.");
         window.location.reload();
-      }, 500); // Slightly increased timeout
+      }, 500); 
     }
     
     prevConnectedStateForRefreshRef.current = connected;
-  }, [walletHook.connected]); // Only depends on walletHook.connected
+    prevPublicKeyForRefreshRef.current = currentPkString;
+  }, [walletHook.connected, walletHook.publicKey]);
 
 
   // Effect to handle auto-connection after modal closes with a selection
@@ -320,6 +319,38 @@ export default function HomePage() {
           previousSelectedWalletNameRef.current = null;
       }
   }, [walletModal.visible, walletHook.wallet, walletHook.connected, walletHook.connecting, walletConnect, toast, sendToUnityGame, isLoaded, select]);
+
+
+  // Asset loading effect
+  const lastLoadedPkRef = useRef<string | null>(null);
+  useEffect(() => {
+    const currentPkString = walletHook.publicKey?.toBase58() || null;
+
+    if (
+      walletHook.connected &&
+      currentPkString &&
+      !isLoadingAssets &&
+      !isSubmittingTransaction &&
+      lastLoadedPkRef.current !== currentPkString // Only load if PK changed or first load for this PK
+    ) {
+      console.log(`[Page RUW AssetEffect] Conditions met for PK ${currentPkString}. Triggering asset load.`);
+      lastLoadedPkRef.current = currentPkString; // Mark this PK as being processed for loading
+      debouncedLoadUserAssets();
+    } else if (!walletHook.connected || !currentPkString) {
+      // Reset if wallet disconnects, so it reloads on next connect
+      if (lastLoadedPkRef.current !== null) {
+        console.log("[Page RUW AssetEffect] Wallet disconnected or PK cleared. Resetting lastLoadedPkRef.");
+        lastLoadedPkRef.current = null;
+      }
+    }
+  }, [
+    walletHook.connected, 
+    walletHook.publicKey, // Main trigger
+    isLoadingAssets,      // Guard
+    isSubmittingTransaction, // Guard
+    debouncedLoadUserAssets // Stable function to call
+  ]);
+
 
   // --- Memoized Global Handler Definitions ---
   const memoizedHandleConnectWalletRequest = useCallback(async (walletNameFromUnity?: string) => {
@@ -382,7 +413,7 @@ export default function HomePage() {
            if(isLoaded) sendToUnityGame("GameBridgeManager", "OnWalletSelectionNeeded", { message: `Please select a wallet.` });
         }
     }
-  }, [isLoaded, sendToUnityGame, toast, walletModal, select, walletConnect]); 
+  }, [isLoaded, sendToUnityGame, toast, walletModal, select, walletConnect, walletHookRef]); 
 
   const memoizedHandleIsWalletConnectedRequest = useCallback(() => {
     if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleIsWalletConnectedRequest: Unity/Client not ready."); return false; }
@@ -390,14 +421,14 @@ export default function HomePage() {
     const pk = walletHookRef.current.publicKey?.toBase58() || null;
     if(isLoaded) sendToUnityGame("GameBridgeManager", "OnWalletConnectionStatus", { isConnected: currentlyConnected, publicKey: pk });
     return currentlyConnected;
-  }, [isClientMounted, isLoaded, sendToUnityGame]);
+  }, [isClientMounted, isLoaded, sendToUnityGame, walletHookRef]);
 
   const memoizedHandleGetPublicKeyRequest = useCallback(() => {
     if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleGetPublicKeyRequest: Unity/Client not ready."); return null; }
     const pk = walletHookRef.current.publicKey?.toBase58() || null;
     if(isLoaded) sendToUnityGame("GameBridgeManager", "OnPublicKeyReceived", { publicKey: pk });
     return pk;
-  }, [isClientMounted, isLoaded, sendToUnityGame]);
+  }, [isClientMounted, isLoaded, sendToUnityGame, walletHookRef]);
 
   const memoizedHandleDisconnectWalletRequest = useCallback(async () => {
     if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleDisconnectWalletRequest: Unity/Client not ready."); return; }
@@ -407,7 +438,7 @@ export default function HomePage() {
       if(isLoaded) sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: error.message, action: "disconnect_wallet" });
       toast({ title: "Wallet Disconnect Error", description: error.message, variant: "destructive" });
     }
-  }, [isClientMounted, isLoaded, sendToUnityGame, toast]);
+  }, [isClientMounted, isLoaded, sendToUnityGame, toast, walletHookRef]);
 
   const memoizedHandleGetAvailableWalletsRequest = useCallback(() => {
     if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleGetAvailableWalletsRequest: Unity/Client not ready."); return []; }
@@ -415,7 +446,7 @@ export default function HomePage() {
     const available = currentAvailableWallets.map(w => ({ name: w.adapter.name, icon: w.adapter.icon, readyState: w.adapter.readyState }));
     if(isLoaded) sendToUnityGame("GameBridgeManager", "OnAvailableWalletsReceived", { wallets: available });
     return available;
-  }, [isClientMounted, isLoaded, sendToUnityGame]);
+  }, [isClientMounted, isLoaded, sendToUnityGame, walletHookRef]);
 
   const memoizedHandleSelectWalletRequest = useCallback(async (walletName: string) => {
     if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleSelectWalletRequest: Unity/Client not ready."); return; }
@@ -430,7 +461,7 @@ export default function HomePage() {
       if(isLoaded) sendToUnityGame("GameBridgeManager", "OnWalletConnectionError", { error: error.message, action: "select_wallet_exception" });
       toast({ title: "Wallet Selection Error", description: error.message, variant: "destructive" });
     }
-  }, [isClientMounted, isLoaded, sendToUnityGame, toast, select]);
+  }, [isClientMounted, isLoaded, sendToUnityGame, toast, select, walletHookRef]);
 
   const memoizedHandleGetUserNFTsRequest = useCallback(async () => {
     if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleGetUserNFTsRequest: Unity/Client not ready."); if(isLoaded) sendToUnityGame("GameBridgeManager", "OnUserNFTsRequested", { error: "Unity/Client not ready", nfts: [], cnfts: [] }); return; }
@@ -443,7 +474,7 @@ export default function HomePage() {
       if (isLoaded) sendToUnityGame("GameBridgeManager", "OnUserNFTsRequested", { nfts: nftsRef.current, cnfts: cnftsRef.current });
     } catch (e:any) { if (isLoaded) sendToUnityGame("GameBridgeManager", "OnUserNFTsRequested", { error: e.message, nfts:[], cnfts:[]}); }
     finally { setIsLoadingAssets(false); if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false }); }
-  }, [isClientMounted, isLoaded, sendToUnityGame, connection]); // Removed fetchAssetsForOwner
+  }, [isClientMounted, isLoaded, sendToUnityGame, connection, walletHookRef, rpcUrlRef, nftsRef, cnftsRef]);
 
   const memoizedHandleGetUserTokensRequest = useCallback(async () => {
     if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleGetUserTokensRequest: Unity/Client not ready."); if(isLoaded) sendToUnityGame("GameBridgeManager", "OnUserTokensRequested", { error: "Unity/Client not ready", tokens: [], solBalance: 0 }); return; }
@@ -459,7 +490,7 @@ export default function HomePage() {
       if (isLoaded) sendToUnityGame("GameBridgeManager", "OnUserTokensRequested", { tokens: tokensRef.current, solBalance: solBalanceRef.current });
     } catch (e:any) { if (isLoaded) sendToUnityGame("GameBridgeManager", "OnUserTokensRequested", { error: e.message, tokens:[], solBalance: 0}); }
     finally { setIsLoadingAssets(false); if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false }); }
-  }, [isClientMounted, isLoaded, sendToUnityGame, connection, fetchSolBalanceInternal]); // Removed fetchAssetsForOwner
+  }, [isClientMounted, isLoaded, sendToUnityGame, connection, fetchSolBalanceInternal, walletHookRef, rpcUrlRef, tokensRef, solBalanceRef]);
   
   const memoizedHandleGetSolBalanceRequest = useCallback(async () => {
     if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleGetSolBalanceRequest: Unity/Client not ready."); return 0; }
@@ -482,14 +513,14 @@ export default function HomePage() {
       }
     } catch (error: any) { toast({ title: `${actionName.replace(/_/g, ' ')} Failed`, description: error.message, variant: "destructive" }); if (isLoaded) sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: actionName, error: error.message, mint });
     } finally { setIsSubmittingTransaction(false); if (isLoaded) sendToUnityGame("GameBridgeManager", "OnTransactionSubmitting", { action: actionName, submitting: false, mint }); }
-  }, [isClientMounted, isLoaded, sendToUnityGame, connection, toast, debouncedLoadUserAssets, fetchSolBalanceInternal]);
+  }, [isClientMounted, isLoaded, sendToUnityGame, connection, toast, debouncedLoadUserAssets, fetchSolBalanceInternal, walletHookRef, currentNetworkRef, isSubmittingTransactionRef]);
 
   const memoizedHandleTransferSOLRequest = useCallback((amountSol: number, toAddress: string) => {
       if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleTransferSOLRequest: Unity/Client not ready."); return; }
       if (amountSol <= 0) { if(isLoaded) sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: "transfer_sol", error: "Amount must be positive" }); return; }
       const recipientPublicKey = new PublicKey(toAddress);
       performTransaction("transfer_sol", null, () => transferSol(connection, walletHookRef.current, recipientPublicKey, amountSol), false);
-  }, [isClientMounted, isLoaded, sendToUnityGame, connection, performTransaction]);
+  }, [isClientMounted, isLoaded, sendToUnityGame, connection, performTransaction, walletHookRef]);
 
   const memoizedHandleTransferTokenRequest = useCallback((mint: string, amount: number, toAddress: string) => {
       if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleTransferTokenRequest: Unity/Client not ready."); return; }
@@ -498,7 +529,7 @@ export default function HomePage() {
       if (amount <= 0) { if(isLoaded) sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: "transfer_token", error: "Amount must be positive", mint }); return; }
       const recipientPublicKey = new PublicKey(toAddress);
       performTransaction("transfer_token", mint, () => transferSplToken(connection, walletHookRef.current, token, recipientPublicKey, amount));
-  }, [isClientMounted, isLoaded, sendToUnityGame, connection, performTransaction]);
+  }, [isClientMounted, isLoaded, sendToUnityGame, connection, performTransaction, walletHookRef, tokensRef]);
 
   const memoizedHandleTransferNFTRequest = useCallback((mint: string, toAddress: string) => {
       if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleTransferNFTRequest: Unity/Client not ready."); return; }
@@ -506,26 +537,26 @@ export default function HomePage() {
       if (!asset) { if(isLoaded) sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: "transfer_nft", error: "Asset not found", mint }); return; }
       const recipientPublicKey = new PublicKey(toAddress);
       if (asset.type === 'nft') performTransaction("transfer_nft", mint, () => transferNft(connection, walletHookRef.current, asset as Nft, recipientPublicKey));
-      else if (asset.type === 'cnft') performTransaction("transfer_nft", mint, () => transferCNft(connection, walletHookRef.current, asset as CNft, recipientPublicKey, rpcUrlRef.current));
-  }, [isClientMounted, isLoaded, sendToUnityGame, connection, performTransaction]);
+      else if (asset.type === 'cnft') performTransaction("transfer_nft", mint, () => transferCNft(connection, walletHookRef.current, asset as Cnft, recipientPublicKey, rpcUrlRef.current));
+  }, [isClientMounted, isLoaded, sendToUnityGame, connection, performTransaction, walletHookRef, allFetchedAssetsRef, rpcUrlRef]);
 
    const memoizedHandleBurnSOLRequest = useCallback((amountSol: number) => {
       if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleBurnSOLRequest: Unity/Client not ready."); return; }
       if (amountSol <= 0) { if(isLoaded) sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: "burn_sol", error: "Amount must be positive" }); return; }
       performTransaction("burn_sol", null, () => burnSol(connection, walletHookRef.current, amountSol), false);
-  }, [isClientMounted, isLoaded, sendToUnityGame, connection, performTransaction]);
+  }, [isClientMounted, isLoaded, sendToUnityGame, connection, performTransaction, walletHookRef]);
 
   const memoizedHandleBurnAssetRequest = useCallback((mint: string, amount?: number) => {
       if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleBurnAssetRequest: Unity/Client not ready."); return; }
       const asset = allFetchedAssetsRef.current.find(a => a.id === mint);
       if (!asset) { if(isLoaded) sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: "burn_asset", error: "Asset not found", mint }); return; }
       if (asset.type === 'nft') performTransaction("burn_asset", mint, () => burnNft(connection, walletHookRef.current, asset as Nft));
-      else if (asset.type === 'cnft') performTransaction("burn_asset", mint, () => burnCNft(connection, walletHookRef.current, asset as CNft, rpcUrlRef.current));
+      else if (asset.type === 'cnft') performTransaction("burn_asset", mint, () => burnCNft(connection, walletHookRef.current, asset as Cnft, rpcUrlRef.current));
       else if (asset.type === 'token') {
           if (typeof amount !== 'number' || amount <= 0) { if(isLoaded) sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: "burn_asset", error: "Invalid amount for token burn", mint }); return; }
           performTransaction("burn_asset", mint, () => burnSplToken(connection, walletHookRef.current, asset as SplToken, amount));
       }
-  }, [isClientMounted, isLoaded, sendToUnityGame, connection, performTransaction]);
+  }, [isClientMounted, isLoaded, sendToUnityGame, connection, performTransaction, walletHookRef, allFetchedAssetsRef, rpcUrlRef]);
 
   const memoizedHandleMintNFTRequest = useCallback((name: string, symbol: string, metadataUri: string) => {
     if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleMintNFTRequest: Unity/Client not ready."); return; }
@@ -534,7 +565,7 @@ export default function HomePage() {
       if (isLoaded) sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: "mint_nft", error: "Minting disabled on Mainnet" }); return;
     }
     performTransaction("mint_nft", name, () => mintStandardNft(connection, walletHookRef.current, metadataUri, name, symbol));
-  }, [isClientMounted, isLoaded, sendToUnityGame, toast, connection, performTransaction]);
+  }, [isClientMounted, isLoaded, sendToUnityGame, toast, connection, performTransaction, walletHookRef, currentNetworkRef]);
 
   const memoizedHandleSwapTokensRequest = useCallback(() => {
     if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleSwapTokensRequest: Unity/Client not ready."); return; }
@@ -553,7 +584,7 @@ export default function HomePage() {
           if (!token) { if (isLoaded) sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: "deposit_funds", error: "Token not found for deposit", tokenMint: tokenMintOrSol }); return; }
           performTransaction("deposit_funds", tokenMintOrSol, () => depositSplToken(connection, walletHookRef.current, token, amount, CUSTODIAL_WALLET_ADDRESS));
       }
-  }, [isClientMounted, isLoaded, sendToUnityGame, connection, performTransaction]);
+  }, [isClientMounted, isLoaded, sendToUnityGame, connection, performTransaction, walletHookRef, tokensRef]);
 
   const memoizedHandleWithdrawFundsRequest = useCallback(async (tokenMintOrSol: string, grossAmount: number) => {
     if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleWithdrawFundsRequest: Unity/Client not ready."); if(isLoaded) sendToUnityGame("GameBridgeManager", "OnWithdrawalResponse", { success: false, message: "Unity/Client not ready", action: "withdraw_funds", tokenMint: tokenMintOrSol }); return; }
@@ -578,7 +609,7 @@ export default function HomePage() {
       if (isLoaded) sendToUnityGame("GameBridgeManager", "OnWithdrawalResponse", { ...result, action: "withdraw_funds", tokenMint: tokenMintOrSol, explorerUrl: result.signature ? getTransactionExplorerUrl(result.signature, currentNetworkRef.current) : undefined });
     } catch (error: any) { toast({ title: "Withdrawal Request Error", description: error.message, variant: "destructive" }); if (isLoaded) sendToUnityGame("GameBridgeManager", "OnWithdrawalResponse", { success: false, message: error.message, error: error.message, action: "withdraw_funds", tokenMint: tokenMintOrSol });
     } finally { setIsSubmittingTransaction(false); if (isLoaded) sendToUnityGame("GameBridgeManager", "OnTransactionSubmitting", { action: "withdraw_funds", submitting: false, tokenMint: tokenMintOrSol }); }
-  }, [isClientMounted, isLoaded, sendToUnityGame, toast, fetchSolBalanceInternal]);
+  }, [isClientMounted, isLoaded, sendToUnityGame, toast, fetchSolBalanceInternal, walletHookRef, currentNetworkRef, allFetchedAssetsRef, isSubmittingTransactionRef]);
   
   const memoizedHandleSetNetworkRequest = useCallback((network: SupportedSolanaNetwork) => {
       if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleSetNetworkRequest: Unity/Client not ready."); return; }
@@ -590,7 +621,7 @@ export default function HomePage() {
       if (!isLoaded && !isClientMounted) { console.warn("[Page RUW GlobalCB] handleGetCurrentNetworkRequest: Unity/Client not ready."); return currentNetworkRef.current; } 
       if (isLoaded) sendToUnityGame("GameBridgeManager", "OnCurrentNetworkReceived", { network: currentNetworkRef.current });
       return currentNetworkRef.current;
-  }, [isClientMounted, isLoaded, sendToUnityGame]);
+  }, [isClientMounted, isLoaded, sendToUnityGame, currentNetworkRef]);
 
   // --- Memoized Unity Event Listeners ---
   const memoizedHandleGameBridgeManagerReady = useCallback(() => {
@@ -621,7 +652,7 @@ export default function HomePage() {
           console.log("[Page RUW ListenerCB 'loaded' event] Unity is loaded, wallet connected. Re-sending OnWalletConnected.");
           sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: currentPublicKey.toBase58() });
       }
-  }, [isClientMounted, sendToUnityGame]);
+  }, [isClientMounted, sendToUnityGame, walletHookRef]);
 
 
   // Effect to manage global JS functions for Unity bridge and react-unity-webgl listeners
@@ -783,5 +814,4 @@ export default function HomePage() {
   );
 }
     
-
     
