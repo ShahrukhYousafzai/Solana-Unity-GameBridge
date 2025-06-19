@@ -708,12 +708,7 @@ export default function HomePage() {
              <div className="w-1/2 max-w-md mt-2 h-2 bg-muted rounded-full overflow-hidden">
                 <div className="h-full bg-primary transition-all duration-150" style={{ width: `${loadingPercentage}%`}}></div>
              </div>
-             {loadingPercentage < 1 && (
-                <p className="text-sm text-muted-foreground mt-6 px-4 text-center max-w-md">
-                    Ensure your Unity build files (e.g., <code>{gameBaseNameOrDefault}.loader.js</code>, <code>.data</code>, <code>.wasm</code>) are in the <code>public/Build/</code> directory.
-                </p>
-             )}
-              <p className="text-xs text-muted-foreground mt-2 px-4 text-center">If stuck, check browser console (F12) for errors.</p>
+              <p className="text-xs text-muted-foreground mt-2 px-4 text-center">Hang tight — it might take a bit longer to load the first time.</p>
           </div>
         ) : null}
         {isClientMounted && unityProvider && ( 
