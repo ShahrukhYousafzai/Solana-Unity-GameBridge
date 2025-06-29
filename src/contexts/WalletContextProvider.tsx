@@ -45,7 +45,7 @@ export const WalletContextProvider: FC<{ children: ReactNode }> = ({
       <WalletProvider
         wallets={walletsToInitialize}
         standardWallets={standardWalletsToPass} 
-        autoConnect={false} // Ensure autoConnect is false
+        autoConnect={true} // Keep wallet connected across page reloads
         key={`${providerKey}-wallet`}
       >
         <WalletModalProvider>{children}</WalletModalProvider>
