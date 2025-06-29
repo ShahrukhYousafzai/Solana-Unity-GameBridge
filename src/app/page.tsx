@@ -195,7 +195,10 @@ export default function HomePage() {
         sendToUnityGame("GameBridgeManager", "OnAssetsLoaded", { nfts: [], cnfts: [], tokens: [], solBalance: 0 });
       }
       resetLocalAssets();
-      setIsInitialLoadComplete(true); // Mark as complete even if there's nothing to load
+      setIsInitialLoadComplete(true);
+      if (isLoaded && currentPk) {
+         sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: currentPk.toBase58() });
+      }
       return;
     }
     setIsLoadingAssets(true);
@@ -226,7 +229,14 @@ export default function HomePage() {
     } finally {
       setIsLoadingAssets(false);
       if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false });
-      setIsInitialLoadComplete(true); // Mark initial load as complete
+      setIsInitialLoadComplete(true);
+
+      // After assets are loaded (or failed), NOW we send the connected message.
+      // This ensures Unity has asset data before proceeding with logic that depends on it.
+      if (isLoaded && walletHookRef.current.publicKey) {
+         console.log(`[Page RUW] Initial assets processed. Now sending OnWalletConnected to Unity.`);
+         sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: walletHookRef.current.publicKey.toBase58() });
+      }
     }
   }, [isLoaded, sendToUnityGame, toast, fetchSolBalanceInternal, connection, resetLocalAssets]); 
 
@@ -235,23 +245,15 @@ export default function HomePage() {
   const prevConnectedForUnityRef = useRef<boolean | undefined>(undefined);
   const prevPublicKeyForUnityRef = useRef<string | undefined>(undefined);
 
+  // This effect now ONLY handles sending the disconnect message
   useEffect(() => {
-    const { connected, publicKey } = walletHookRef.current;
-    const currentPkString = publicKey?.toBase58();
+    const { connected } = walletHookRef.current;
   
     if (!isClientMounted) { 
-      console.log("[Page RUW WalletEffect] Client not mounted. Skipping wallet status messages.");
       return;
     }
 
-    if (connected && currentPkString && isInitialLoadComplete) {
-      if (prevConnectedForUnityRef.current !== true || prevPublicKeyForUnityRef.current !== currentPkString) {
-          console.log(`[Page RUW WalletEffect] Wallet connected & initial assets loaded. Sending OnWalletConnected.`);
-          if (isLoaded) { 
-            sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: currentPkString });
-          }
-      }
-    } else if (!connected) { 
+    if (!connected) { 
       if (prevConnectedForUnityRef.current === true) {
         console.log(`[Page RUW WalletEffect] Wallet transitioned to disconnected. Sending OnWalletDisconnected.`);
         if (isLoaded) sendToUnityGame("GameBridgeManager", "OnWalletDisconnected", {});
@@ -260,9 +262,8 @@ export default function HomePage() {
     }
 
     prevConnectedForUnityRef.current = connected;
-    prevPublicKeyForUnityRef.current = currentPkString;
 
-  }, [walletHook.connected, walletHook.publicKey, isLoaded, sendToUnityGame, isClientMounted, resetLocalAssets, isInitialLoadComplete]);
+  }, [walletHook.connected, isLoaded, sendToUnityGame, isClientMounted, resetLocalAssets]);
   
   const prevConnectedStateForRefreshRef = useRef<boolean>(walletHook.connected);
   const disconnectReloadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -270,6 +271,7 @@ export default function HomePage() {
   useEffect(() => {
     const { connected } = walletHookRef.current;
     
+    // Prevent reload logic from running while assets are being loaded
     if (isLoadingAssets) {
         if (disconnectReloadTimeoutRef.current) {
             clearTimeout(disconnectReloadTimeoutRef.current);
@@ -455,6 +457,16 @@ export default function HomePage() {
 
   const memoizedHandleGetUserNFTsRequest = useCallback(async () => {
     if (!walletHookRef.current.publicKey || !connection) { if(isLoaded) sendToUnityGame("GameBridgeManager", "OnUserNFTsRequested", { error: "Wallet not connected", nfts: [], cnfts: [] }); return; }
+    
+    // If initial load is complete, just send the currently held state. Avoids re-fetching.
+    if(isInitialLoadComplete) {
+        console.log("[Page RUW GlobalCB] Sending cached NFTs/cNFTs to Unity.");
+        if (isLoaded) sendToUnityGame("GameBridgeManager", "OnUserNFTsRequested", { nfts: nftsRef.current, cnfts: cnftsRef.current });
+        return;
+    }
+
+    // Fallback: If for some reason this is called before initial load, fetch on demand.
+    console.log("[Page RUW GlobalCB] Initial assets not yet loaded. Fetching on demand for GetUserNFTsRequest.");
     setIsLoadingAssets(true); if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: true });
     try {
       const { nfts: fetchedNfts, cnfts: fetchedCnfts, heliusWarning } = await fetchAssetsForOwner(walletHookRef.current.publicKey.toBase58(), rpcUrlRef.current, connection, walletHookRef.current);
@@ -463,10 +475,18 @@ export default function HomePage() {
       if (isLoaded) sendToUnityGame("GameBridgeManager", "OnUserNFTsRequested", { nfts: nftsRef.current, cnfts: cnftsRef.current });
     } catch (e:any) { if (isLoaded) sendToUnityGame("GameBridgeManager", "OnUserNFTsRequested", { error: e.message, nfts:[], cnfts:[]}); }
     finally { setIsLoadingAssets(false); if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false }); }
-  }, [connection, walletHookRef, rpcUrlRef, sendToUnityGame, isLoaded]);
+  }, [connection, walletHookRef, rpcUrlRef, sendToUnityGame, isLoaded, isInitialLoadComplete]);
 
   const memoizedHandleGetUserTokensRequest = useCallback(async () => {
     if (!walletHookRef.current.publicKey || !connection) { if(isLoaded) sendToUnityGame("GameBridgeManager", "OnUserTokensRequested", { error: "Wallet not connected", tokens: [], solBalance: 0 }); return; }
+
+    if(isInitialLoadComplete) {
+        console.log("[Page RUW GlobalCB] Sending cached Tokens/SOL to Unity.");
+        if (isLoaded) sendToUnityGame("GameBridgeManager", "OnUserTokensRequested", { tokens: tokensRef.current, solBalance: solBalanceRef.current });
+        return;
+    }
+    
+    console.log("[Page RUW GlobalCB] Initial assets not yet loaded. Fetching on demand for GetUserTokensRequest.");
     setIsLoadingAssets(true); if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: true });
     try {
       const [fetchedSol, { tokens: fetchedTokensFromHelius, heliusWarning }] = await Promise.all([
@@ -478,11 +498,15 @@ export default function HomePage() {
       if (isLoaded) sendToUnityGame("GameBridgeManager", "OnUserTokensRequested", { tokens: tokensRef.current, solBalance: solBalanceRef.current });
     } catch (e:any) { if (isLoaded) sendToUnityGame("GameBridgeManager", "OnUserTokensRequested", { error: e.message, tokens:[], solBalance: 0}); }
     finally { setIsLoadingAssets(false); if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false }); }
-  }, [connection, fetchSolBalanceInternal, walletHookRef, rpcUrlRef, sendToUnityGame, isLoaded]);
+  }, [connection, fetchSolBalanceInternal, walletHookRef, rpcUrlRef, sendToUnityGame, isLoaded, isInitialLoadComplete]);
   
   const memoizedHandleGetSolBalanceRequest = useCallback(async () => {
+    if(isInitialLoadComplete) {
+        if(isLoaded) sendToUnityGame("GameBridgeManager", "OnSolBalanceUpdated", { solBalance: solBalanceRef.current });
+        return solBalanceRef.current;
+    }
     return fetchSolBalanceInternal(); 
-  }, [fetchSolBalanceInternal]);
+  }, [fetchSolBalanceInternal, isInitialLoadComplete]);
 
   const performTransaction = useCallback(async (actionName: string, mint: string | null, transactionFn: () => Promise<string>, reloadAssets: boolean = true) => {
     if (isSubmittingTransactionRef.current) { if(isLoaded) sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: actionName, error: "Transaction in progress", mint }); return; }
@@ -600,7 +624,14 @@ export default function HomePage() {
 
   const memoizedHandleGameBridgeManagerReady = useCallback(() => {
     console.log("[Page RUW ListenerCB] Received 'OnGameBridgeManagerReady' from Unity.");
-  }, []);
+    const { connected: currentlyConnected, publicKey: currentPublicKey } = walletHookRef.current;
+    if (isClientMounted && currentlyConnected && currentPublicKey) {
+      console.log("[Page RUW ListenerCB 'OnGameBridgeManagerReady'] Unity is ready, wallet connected. Triggering asset load.");
+      // This is a good place to trigger the initial asset load if the wallet is already connected.
+      debouncedLoadUserAssets();
+    }
+  }, [isClientMounted, walletHookRef, debouncedLoadUserAssets]);
+
 
   const memoizedHandleUnityError = useCallback((error: Error | string) => { 
     const errorMessage = typeof error === 'string' ? error : error.message;
@@ -620,20 +651,14 @@ export default function HomePage() {
   const memoizedHandleUnityLoaded = useCallback(() => {
       console.log("[Page RUW ListenerCB] ReactUnityWebGL 'loaded' event received. Signaling 'OnUnityReady' to GameBridgeManager.");
       if(isClientMounted) sendToUnityGame("GameBridgeManager", "OnUnityReady", {});
-      const { connected: currentlyConnected, publicKey: currentPublicKey } = walletHookRef.current;
-      if (isClientMounted && currentlyConnected && currentPublicKey && isInitialLoadComplete) {
-          console.log("[Page RUW ListenerCB 'loaded' event] Unity is loaded, wallet connected. Re-sending OnWalletConnected.");
-          sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: currentPublicKey.toBase58() });
-      }
-  }, [isClientMounted, sendToUnityGame, walletHookRef, isInitialLoadComplete]);
+  }, [isClientMounted, sendToUnityGame]);
 
 
   useEffect(() => {
     if (!isClientMounted) {
-      console.log("[Page RUW BridgeEffect] Client not mounted. Skipping bridge setup.");
       return;
     }
-    console.log("[Page RUW BridgeEffect] Client is mounted. Setting up global handlers for Unity.");
+    console.log("[Page RUW BridgeEffect] Setting up global handlers for Unity.");
     window.handleConnectWalletRequest = memoizedHandleConnectWalletRequest;
     window.handleIsWalletConnectedRequest = memoizedHandleIsWalletConnectedRequest;
     window.handleGetPublicKeyRequest = memoizedHandleGetPublicKeyRequest;
@@ -654,7 +679,6 @@ export default function HomePage() {
     window.handleWithdrawFundsRequest = memoizedHandleWithdrawFundsRequest;
     window.handleSetNetworkRequest = memoizedHandleSetNetworkRequest;
     window.handleGetCurrentNetworkRequest = memoizedHandleGetCurrentNetworkRequest;
-    console.log("[Page RUW BridgeEffect] Global Request Handlers DEFINED.");
     
     return () => {
       console.log("[Page RUW BridgeEffect Cleanup] Cleaning up global request handlers.");
@@ -687,7 +711,7 @@ export default function HomePage() {
     if (!isClientMounted || !isLoaded || !addEventListener || !removeEventListener) {
       return;
     }
-    console.log("[Page RUW UnityListenersEffect] Unity is loaded. Setting up Unity event listeners.");
+    console.log("[Page RUW UnityListenersEffect] Setting up Unity event listeners.");
     addEventListener("OnGameBridgeManagerReady", memoizedHandleGameBridgeManagerReady);
     addEventListener("error", memoizedHandleUnityError);
     addEventListener("loaded", memoizedHandleUnityLoaded);
@@ -799,5 +823,7 @@ export default function HomePage() {
 
 
 
+
+    
 
     
