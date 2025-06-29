@@ -231,8 +231,6 @@ export default function HomePage() {
       if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false });
       setIsInitialLoadComplete(true);
 
-      // After assets are loaded (or failed), NOW we send the connected message.
-      // This ensures Unity has asset data before proceeding with logic that depends on it.
       if (isLoaded && walletHookRef.current.publicKey) {
          console.log(`[Page RUW] Initial assets processed. Now sending OnWalletConnected to Unity.`);
          sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: walletHookRef.current.publicKey.toBase58() });
@@ -243,9 +241,7 @@ export default function HomePage() {
   const debouncedLoadUserAssets = useMemo(() => debounce(loadUserAssetsInternal, 500), [loadUserAssetsInternal]);
 
   const prevConnectedForUnityRef = useRef<boolean | undefined>(undefined);
-  const prevPublicKeyForUnityRef = useRef<string | undefined>(undefined);
 
-  // This effect now ONLY handles sending the disconnect message
   useEffect(() => {
     const { connected } = walletHookRef.current;
   
@@ -271,7 +267,6 @@ export default function HomePage() {
   useEffect(() => {
     const { connected } = walletHookRef.current;
     
-    // Prevent reload logic from running while assets are being loaded
     if (isLoadingAssets) {
         if (disconnectReloadTimeoutRef.current) {
             clearTimeout(disconnectReloadTimeoutRef.current);
@@ -301,17 +296,19 @@ export default function HomePage() {
   useEffect(() => {
     const currentPkString = walletHookRef.current.publicKey?.toBase58() || null;
     if (
+      isLoaded && 
       walletHookRef.current.connected &&
       currentPkString &&
       !isLoadingAssets &&
       !isSubmittingTransaction &&
       lastLoadedPkForAssetsRef.current !== currentPkString
     ) {
-      console.log(`[Page RUW AssetEffect] Conditions met for PK ${currentPkString}. Triggering asset load. Last loaded PK: ${lastLoadedPkForAssetsRef.current}`);
+      console.log(`[Page RUW AssetEffect] Conditions met (isLoaded=true). Triggering asset load for PK ${currentPkString}.`);
       lastLoadedPkForAssetsRef.current = currentPkString; 
       debouncedLoadUserAssets();
     }
   }, [
+    isLoaded,
     walletHook.connected, 
     walletHook.publicKey,
     isLoadingAssets,      
@@ -624,13 +621,7 @@ export default function HomePage() {
 
   const memoizedHandleGameBridgeManagerReady = useCallback(() => {
     console.log("[Page RUW ListenerCB] Received 'OnGameBridgeManagerReady' from Unity.");
-    const { connected: currentlyConnected, publicKey: currentPublicKey } = walletHookRef.current;
-    if (isClientMounted && currentlyConnected && currentPublicKey) {
-      console.log("[Page RUW ListenerCB 'OnGameBridgeManagerReady'] Unity is ready, wallet connected. Triggering asset load.");
-      // This is a good place to trigger the initial asset load if the wallet is already connected.
-      debouncedLoadUserAssets();
-    }
-  }, [isClientMounted, walletHookRef, debouncedLoadUserAssets]);
+  }, []);
 
 
   const memoizedHandleUnityError = useCallback((error: Error | string) => { 
@@ -823,6 +814,8 @@ export default function HomePage() {
 
 
 
+
+    
 
     
 
