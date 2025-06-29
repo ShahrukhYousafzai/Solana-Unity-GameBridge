@@ -113,6 +113,7 @@ export default function HomePage() {
   const [isSubmittingTransaction, setIsSubmittingTransaction] = useState(false);
   const [currentDevicePixelRatio, setCurrentDevicePixelRatio] = useState<number | undefined>(undefined);
   const [isClientMounted, setIsClientMounted] = useState(false);
+  const [isInitialLoadComplete, setIsInitialLoadComplete] = useState(false);
 
 
   const nftsRef = useRef(nfts);
@@ -182,6 +183,7 @@ export default function HomePage() {
     setTokens([]);
     _setSolBalance(0);
     lastLoadedPkForAssetsRef.current = null; 
+    setIsInitialLoadComplete(false);
   }, []);
 
   const loadUserAssetsInternal = useCallback(async () => {
@@ -193,6 +195,7 @@ export default function HomePage() {
         sendToUnityGame("GameBridgeManager", "OnAssetsLoaded", { nfts: [], cnfts: [], tokens: [], solBalance: 0 });
       }
       resetLocalAssets();
+      setIsInitialLoadComplete(true); // Mark as complete even if there's nothing to load
       return;
     }
     setIsLoadingAssets(true);
@@ -223,6 +226,7 @@ export default function HomePage() {
     } finally {
       setIsLoadingAssets(false);
       if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false });
+      setIsInitialLoadComplete(true); // Mark initial load as complete
     }
   }, [isLoaded, sendToUnityGame, toast, fetchSolBalanceInternal, connection, resetLocalAssets]); 
 
@@ -239,58 +243,49 @@ export default function HomePage() {
       console.log("[Page RUW WalletEffect] Client not mounted. Skipping wallet status messages.");
       return;
     }
-  
-    if (connected && currentPkString) {
+
+    if (connected && currentPkString && isInitialLoadComplete) {
       if (prevConnectedForUnityRef.current !== true || prevPublicKeyForUnityRef.current !== currentPkString) {
-          console.log(`[Page RUW WalletEffect] Wallet connected (PK: ${currentPkString}). Sending OnWalletConnected.`);
+          console.log(`[Page RUW WalletEffect] Wallet connected & initial assets loaded. Sending OnWalletConnected.`);
           if (isLoaded) { 
             sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: currentPkString });
           }
       }
-    } else { 
-      if (prevConnectedForUnityRef.current === true && !connected) {
-        console.log(`[Page RUW WalletEffect] Wallet transitioned to disconnected. Sending OnWalletDisconnected. PrevConnected: ${prevConnectedForUnityRef.current}, NowConnected: ${connected}`);
+    } else if (!connected) { 
+      if (prevConnectedForUnityRef.current === true) {
+        console.log(`[Page RUW WalletEffect] Wallet transitioned to disconnected. Sending OnWalletDisconnected.`);
         if (isLoaded) sendToUnityGame("GameBridgeManager", "OnWalletDisconnected", {});
         resetLocalAssets(); 
-      } else if (prevConnectedForUnityRef.current === undefined && !connected && isLoaded && isClientMounted) {
-         console.log("[Page RUW WalletEffect] Initial check: Wallet disconnected and Unity loaded. Sending OnWalletDisconnected.");
-         sendToUnityGame("GameBridgeManager", "OnWalletDisconnected", {});
-         resetLocalAssets(); 
       }
     }
+
     prevConnectedForUnityRef.current = connected;
     prevPublicKeyForUnityRef.current = currentPkString;
-  }, [walletHookRef.current.connected, walletHookRef.current.publicKey, isLoaded, sendToUnityGame, isClientMounted, resetLocalAssets]);
+
+  }, [walletHook.connected, walletHook.publicKey, isLoaded, sendToUnityGame, isClientMounted, resetLocalAssets, isInitialLoadComplete]);
   
   const prevConnectedStateForRefreshRef = useRef<boolean>(walletHook.connected);
-  const prevPublicKeyForRefreshRef = useRef<string | null>(walletHook.publicKey?.toBase58() || null);
   const disconnectReloadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    const { connected, publicKey } = walletHookRef.current;
-    const currentPkString = publicKey?.toBase58() || null;
-
+    const { connected } = walletHookRef.current;
+    
     if (isLoadingAssets) {
-      if (disconnectReloadTimeoutRef.current) {
-        console.log("[Page RUW DisconnectRefreshEffect] Asset loading in progress, cancelling any pending disconnect reload.");
-        clearTimeout(disconnectReloadTimeoutRef.current);
-        disconnectReloadTimeoutRef.current = null;
-      }
-      prevConnectedStateForRefreshRef.current = connected;
-      prevPublicKeyForRefreshRef.current = currentPkString;
-      return; 
+        if (disconnectReloadTimeoutRef.current) {
+            clearTimeout(disconnectReloadTimeoutRef.current);
+            disconnectReloadTimeoutRef.current = null;
+        }
+        prevConnectedStateForRefreshRef.current = connected;
+        return;
     }
-  
+
     if (disconnectReloadTimeoutRef.current) {
       clearTimeout(disconnectReloadTimeoutRef.current);
       disconnectReloadTimeoutRef.current = null;
     }
 
-    const wasPreviouslyConnectedWithPK = prevConnectedStateForRefreshRef.current === true && prevPublicKeyForRefreshRef.current !== null;
-    const isNowFullyDisconnected = !connected && currentPkString === null;
-
-    if (wasPreviouslyConnectedWithPK && isNowFullyDisconnected) {
-        console.log("[Page RUW DisconnectRefreshEffect] Wallet has transitioned from connected to fully disconnected. Scheduling page reload.");
+    if (prevConnectedStateForRefreshRef.current === true && !connected) {
+        console.log("[Page RUW DisconnectRefreshEffect] Wallet has transitioned from connected to disconnected. Scheduling page reload.");
         disconnectReloadTimeoutRef.current = setTimeout(() => {
             console.log("[Page RUW DisconnectRefreshEffect] Executing scheduled reload due to persistent disconnection.");
             window.location.reload();
@@ -298,16 +293,13 @@ export default function HomePage() {
     }
     
     prevConnectedStateForRefreshRef.current = connected;
-    prevPublicKeyForRefreshRef.current = currentPkString;
 
-  }, [walletHook.connected, walletHook.publicKey, isLoadingAssets]); 
+  }, [walletHook.connected, isLoadingAssets]); 
 
   useEffect(() => {
-    const { connected, publicKey } = walletHookRef.current;
-    const currentPkString = publicKey?.toBase58() || null;
-
+    const currentPkString = walletHookRef.current.publicKey?.toBase58() || null;
     if (
-      connected &&
+      walletHookRef.current.connected &&
       currentPkString &&
       !isLoadingAssets &&
       !isSubmittingTransaction &&
@@ -316,17 +308,13 @@ export default function HomePage() {
       console.log(`[Page RUW AssetEffect] Conditions met for PK ${currentPkString}. Triggering asset load. Last loaded PK: ${lastLoadedPkForAssetsRef.current}`);
       lastLoadedPkForAssetsRef.current = currentPkString; 
       debouncedLoadUserAssets();
-    } else if ((!connected || !currentPkString) && lastLoadedPkForAssetsRef.current !== null) {
-        console.log("[Page RUW AssetEffect] Wallet disconnected or PK cleared. Resetting lastLoadedPkRef for assets and clearing local assets.");
-        resetLocalAssets(); 
     }
   }, [
     walletHook.connected, 
     walletHook.publicKey,
     isLoadingAssets,      
     isSubmittingTransaction, 
-    debouncedLoadUserAssets,
-    resetLocalAssets 
+    debouncedLoadUserAssets
   ]);
 
 
@@ -633,11 +621,11 @@ export default function HomePage() {
       console.log("[Page RUW ListenerCB] ReactUnityWebGL 'loaded' event received. Signaling 'OnUnityReady' to GameBridgeManager.");
       if(isClientMounted) sendToUnityGame("GameBridgeManager", "OnUnityReady", {});
       const { connected: currentlyConnected, publicKey: currentPublicKey } = walletHookRef.current;
-      if (isClientMounted && currentlyConnected && currentPublicKey) {
+      if (isClientMounted && currentlyConnected && currentPublicKey && isInitialLoadComplete) {
           console.log("[Page RUW ListenerCB 'loaded' event] Unity is loaded, wallet connected. Re-sending OnWalletConnected.");
           sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: currentPublicKey.toBase58() });
       }
-  }, [isClientMounted, sendToUnityGame, walletHookRef]);
+  }, [isClientMounted, sendToUnityGame, walletHookRef, isInitialLoadComplete]);
 
 
   useEffect(() => {
@@ -706,9 +694,11 @@ export default function HomePage() {
 
     return () => {
       console.log("[Page RUW UnityListenersEffect Cleanup] Cleaning up Unity event listeners.");
-      removeEventListener("OnGameBridgeManagerReady", memoizedHandleGameBridgeManagerReady);
-      removeEventListener("error", memoizedHandleUnityError);
-      removeEventListener("loaded", memoizedHandleUnityLoaded);
+      if(removeEventListener) {
+        removeEventListener("OnGameBridgeManagerReady", memoizedHandleGameBridgeManagerReady);
+        removeEventListener("error", memoizedHandleUnityError);
+        removeEventListener("loaded", memoizedHandleUnityLoaded);
+      }
     };
   }, [
     isClientMounted, isLoaded, 
@@ -808,3 +798,6 @@ export default function HomePage() {
     
 
 
+
+
+    
