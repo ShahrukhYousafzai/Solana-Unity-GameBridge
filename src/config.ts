@@ -42,15 +42,12 @@ export const getRpcUrl = (network: SupportedSolanaNetwork, apiKey: string | unde
   if (network === 'mainnet-beta') {
     return `https://mainnet.helius-rpc.com/?api-key=${apiKey}`;
   }
-  if (network === 'devnet') {
+  // Helius uses its devnet endpoint for both devnet and testnet activities.
+  if (network === 'devnet' || network === 'testnet') {
     return `https://devnet.helius-rpc.com/?api-key=${apiKey}`;
   }
-  if (network === 'testnet') {
-    // Helius might not have a direct testnet RPC named 'testnet', often it's devnet.
-    // Adjust if Helius provides a specific testnet endpoint. For now, falling back to public.
-    console.warn("Helius Testnet RPC not explicitly configured, falling back to public testnet RPC.");
-    return "https://api.testnet.solana.com";
-  }
+  
+  // Fallback for any other unsupported network with an API key
   console.warn(`Unsupported network ${network} with Helius API key. Falling back to public Devnet RPC.`);
   return "https://api.devnet.solana.com";
 };
@@ -61,4 +58,5 @@ export const WITHDRAWAL_TAX_PERCENTAGE = 5; // 5%
 
 // The ALLOWED_WALLET_NAMES constant has been removed.
 // The feature to restrict wallets via environment variable is no longer active.
+
 
