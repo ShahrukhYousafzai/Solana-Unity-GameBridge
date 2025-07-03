@@ -171,7 +171,7 @@ export default function HomePage() {
         console.error("[Page RUW] Failed to fetch SOL balance:", error);
         toast({ title: "Error Fetching SOL Balance", description: error.message, variant: "destructive" });
         if(isLoaded) sendToUnityGame("GameBridgeManager", "OnSolBalanceUpdateFailed", { error: error.message });
-        return 0;
+        throw error; // Re-throw to be caught by Promise.allSettled
       }
     }
     return 0;
@@ -191,27 +191,30 @@ export default function HomePage() {
     const currentRpc = rpcUrlRef.current; 
 
     if (!currentPk || !currentRpc || !connection || !isLoaded ) {
-      if (isLoaded && currentPk) {
-         sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: currentPk.toBase58() });
-      }
       return;
     }
+    
+    // Prevent re-fetching for the same public key if assets are already loaded
+    if (lastLoadedPkForAssetsRef.current === currentPk.toBase58()) {
+      console.log(`[Page RUW] Assets already loaded for ${currentPk.toBase58()}. Skipping refetch.`);
+      return;
+    }
+    
+    lastLoadedPkForAssetsRef.current = currentPk.toBase58();
     setIsLoadingAssets(true);
-    if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: true });
+    sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: true });
 
-    // Use Promise.allSettled to handle individual promise failures gracefully.
     const [solResult, assetsResult] = await Promise.allSettled([
         fetchSolBalanceInternal(),
         fetchAssetsForOwner(currentPk.toBase58(), currentRpc, connection, walletHookRef.current)
     ]);
 
-    let finalSolBalance = solBalanceRef.current; // Fallback to last known balance
+    let finalSolBalance = solBalanceRef.current;
 
     if (solResult.status === 'fulfilled') {
         finalSolBalance = solResult.value;
-        // State is set inside fetchSolBalanceInternal
     } else {
-        console.warn('[Page RUW] SOL balance fetch failed, using fallback. Error:', solResult.reason);
+        console.warn('[Page RUW] SOL balance fetch failed, will use last known value or 0. Error:', solResult.reason);
         // Error is already toasted inside fetchSolBalanceInternal
     }
     
@@ -221,14 +224,14 @@ export default function HomePage() {
         if (heliusWarning) {
             const isApiKeyError = heliusWarning.toLowerCase().includes("access forbidden") || heliusWarning.toLowerCase().includes("api key");
             toast({ title: "API Warning", description: heliusWarning, variant: isApiKeyError ? "destructive" : "default", duration: 7000 });
-            if (isLoaded) sendToUnityGame("GameBridgeManager", "OnHeliusWarning", { warning: heliusWarning, isError: isApiKeyError });
+            sendToUnityGame("GameBridgeManager", "OnHeliusWarning", { warning: heliusWarning, isError: isApiKeyError });
         }
 
         setNfts(fetchedNfts); 
         setCnfts(fetchedCnfts); 
         setTokens(fetchedTokens);
         
-        if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoaded", { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens, solBalance: finalSolBalance });
+        sendToUnityGame("GameBridgeManager", "OnAssetsLoaded", { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens, solBalance: finalSolBalance });
 
         if (!heliusWarning) {
             toast({ title: "Asset Scan Complete", description: `Found ${fetchedNfts.length} NFTs, ${fetchedCnfts.length} cNFTs, ${fetchedTokens.length} Tokens, and ${finalSolBalance.toFixed(SOL_DECIMALS)} SOL on ${currentNetworkRef.current}.` });
@@ -237,20 +240,20 @@ export default function HomePage() {
         const error = assetsResult.reason as any;
         console.error("[Page RUW] Failed to load NFTs and Tokens:", error);
         toast({ title: "Error Loading NFTs & Tokens", description: error.message, variant: "destructive" });
-        if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadFailed", { error: error.message });
+        sendToUnityGame("GameBridgeManager", "OnAssetsLoadFailed", { error: error.message });
         setNfts([]);
         setCnfts([]);
         setTokens([]);
     }
 
     setIsLoadingAssets(false);
-    if (isLoaded) {
-      sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false });
-      if (walletHookRef.current.publicKey) {
-        console.log(`[Page RUW] Initial assets processed. Now sending OnWalletConnected to Unity.`);
-        sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: walletHookRef.current.publicKey.toBase58() });
-      }
+    sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false });
+    
+    if (walletHookRef.current.publicKey) {
+      console.log(`[Page RUW] Initial assets processed. Now sending OnWalletConnected to Unity.`);
+      sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: walletHookRef.current.publicKey.toBase58() });
     }
+    
     setIsInitialLoadComplete(true);
 
   }, [isLoaded, sendToUnityGame, toast, fetchSolBalanceInternal, connection, resetLocalAssets]); 
@@ -317,11 +320,8 @@ export default function HomePage() {
       walletHookRef.current.connected &&
       currentPkString &&
       !isLoadingAssets &&
-      !isSubmittingTransaction &&
-      lastLoadedPkForAssetsRef.current !== currentPkString
+      !isSubmittingTransaction 
     ) {
-      console.log(`[Page RUW AssetEffect] Conditions met (isLoaded=true). Triggering asset load for PK ${currentPkString}.`);
-      lastLoadedPkForAssetsRef.current = currentPkString; 
       debouncedLoadUserAssets();
     }
   }, [
@@ -472,14 +472,12 @@ export default function HomePage() {
   const memoizedHandleGetUserNFTsRequest = useCallback(async () => {
     if (!walletHookRef.current.publicKey || !connection) { if(isLoaded) sendToUnityGame("GameBridgeManager", "OnUserNFTsRequested", { error: "Wallet not connected", nfts: [], cnfts: [] }); return; }
     
-    // If initial load is complete, just send the currently held state. Avoids re-fetching.
     if(isInitialLoadComplete) {
         console.log("[Page RUW GlobalCB] Sending cached NFTs/cNFTs to Unity.");
         if (isLoaded) sendToUnityGame("GameBridgeManager", "OnUserNFTsRequested", { nfts: nftsRef.current, cnfts: cnftsRef.current });
         return;
     }
 
-    // Fallback: If for some reason this is called before initial load, fetch on demand.
     console.log("[Page RUW GlobalCB] Initial assets not yet loaded. Fetching on demand for GetUserNFTsRequest.");
     setIsLoadingAssets(true); if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: true });
     try {
@@ -503,12 +501,23 @@ export default function HomePage() {
     console.log("[Page RUW GlobalCB] Initial assets not yet loaded. Fetching on demand for GetUserTokensRequest.");
     setIsLoadingAssets(true); if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: true });
     try {
-      const [fetchedSol, { tokens: fetchedTokensFromHelius, heliusWarning }] = await Promise.all([
-          fetchSolBalanceInternal(), 
-          fetchAssetsForOwner(walletHookRef.current.publicKey.toBase58(), rpcUrlRef.current, connection, walletHookRef.current)
+      const [solResult, assetsResult] = await Promise.allSettled([
+        fetchSolBalanceInternal(),
+        fetchAssetsForOwner(walletHookRef.current.publicKey.toBase58(), rpcUrlRef.current, connection, walletHookRef.current),
       ]);
-      if (heliusWarning && isLoaded) sendToUnityGame("GameBridgeManager", "OnHeliusWarning", { warning: heliusWarning, isError: heliusWarning.toLowerCase().includes("api key")});
-      setTokens(fetchedTokensFromHelius.filter(a => a.type === 'token') as SplToken[]);
+      
+      if (solResult.status === 'rejected') {
+         console.warn('[Page RUW] SOL balance fetch failed during token request. Error:', solResult.reason);
+      }
+      
+      if (assetsResult.status === 'fulfilled') {
+        const { tokens: fetchedTokensFromHelius, heliusWarning } = assetsResult.value;
+        if (heliusWarning && isLoaded) sendToUnityGame("GameBridgeManager", "OnHeliusWarning", { warning: heliusWarning, isError: heliusWarning.toLowerCase().includes("api key")});
+        setTokens(fetchedTokensFromHelius.filter(a => a.type === 'token') as SplToken[]);
+      } else {
+         throw assetsResult.reason;
+      }
+
       if (isLoaded) sendToUnityGame("GameBridgeManager", "OnUserTokensRequested", { tokens: tokensRef.current, solBalance: solBalanceRef.current });
     } catch (e:any) { if (isLoaded) sendToUnityGame("GameBridgeManager", "OnUserTokensRequested", { error: e.message, tokens:[], solBalance: 0}); }
     finally { setIsLoadingAssets(false); if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false }); }
