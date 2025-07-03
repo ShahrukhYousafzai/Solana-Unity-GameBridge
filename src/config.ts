@@ -31,25 +31,28 @@ export type SupportedSolanaNetwork = 'mainnet-beta' | 'devnet' | 'testnet';
 
 export const DEFAULT_NETWORK: SupportedSolanaNetwork = 'devnet'; // Defaulting to devnet for easier testing
 
+export const getPublicRpcUrl = (network: SupportedSolanaNetwork): string => {
+  if (network === 'mainnet-beta') return "https://api.mainnet-beta.solana.com";
+  if (network === 'devnet') return "https://api.devnet.solana.com";
+  if (network === 'testnet') return "https://api.testnet.solana.com";
+  return "https://api.devnet.solana.com"; // Default fallback
+};
+
+
 export const getRpcUrl = (network: SupportedSolanaNetwork, apiKey: string | undefined): string => {
-  if (!apiKey) {
-    console.warn("Helius API key is not defined. Falling back to public RPCs, which might be rate-limited or less reliable.");
-    if (network === 'mainnet-beta') return "https://api.mainnet-beta.solana.com";
-    if (network === 'devnet') return "https://api.devnet.solana.com";
-    if (network === 'testnet') return "https://api.testnet.solana.com";
-    return "https://api.devnet.solana.com"; // Default fallback
-  }
-  if (network === 'mainnet-beta') {
-    return `https://mainnet.helius-rpc.com/?api-key=${apiKey}`;
-  }
-  // Helius uses its devnet endpoint for both devnet and testnet activities.
-  if (network === 'devnet' || network === 'testnet') {
-    return `https://devnet.helius-rpc.com/?api-key=${apiKey}`;
+  if (apiKey) {
+    if (network === 'mainnet-beta') {
+      return `https://mainnet.helius-rpc.com/?api-key=${apiKey}`;
+    }
+    // Helius uses its devnet endpoint for both devnet and testnet activities.
+    if (network === 'devnet' || network === 'testnet') {
+      return `https://devnet.helius-rpc.com/?api-key=${apiKey}`;
+    }
   }
   
-  // Fallback for any other unsupported network with an API key
-  console.warn(`Unsupported network ${network} with Helius API key. Falling back to public Devnet RPC.`);
-  return "https://api.devnet.solana.com";
+  // If no API key, fall back to public
+  console.warn("Helius API key is not defined. Falling back to public RPCs, which may be rate-limited or less reliable.");
+  return getPublicRpcUrl(network);
 };
 
 export const SOL_BURN_ADDRESS = "1nc1nerator11111111111111111111111111111111";
@@ -58,6 +61,7 @@ export const WITHDRAWAL_TAX_PERCENTAGE = 5; // 5%
 
 // The ALLOWED_WALLET_NAMES constant has been removed.
 // The feature to restrict wallets via environment variable is no longer active.
+
 
 
 
