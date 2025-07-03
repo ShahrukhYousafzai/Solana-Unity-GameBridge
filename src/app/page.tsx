@@ -203,38 +203,58 @@ export default function HomePage() {
     }
     setIsLoadingAssets(true);
     if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: true });
-    try {
-      const [fetchedSol, { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens, heliusWarning }] = await Promise.all([
-        fetchSolBalanceInternal(), 
+
+    // Use Promise.allSettled to handle individual promise failures gracefully.
+    const [solResult, assetsResult] = await Promise.allSettled([
+        fetchSolBalanceInternal(),
         fetchAssetsForOwner(currentPk.toBase58(), currentRpc, connection, walletHookRef.current)
-      ]);
+    ]);
 
-      if (heliusWarning) {
-        const isApiKeyError = heliusWarning.toLowerCase().includes("access forbidden") || heliusWarning.toLowerCase().includes("api key");
-        toast({ title: "API Warning", description: heliusWarning, variant: isApiKeyError ? "destructive" : "default", duration: 7000 });
-        if (isLoaded) sendToUnityGame("GameBridgeManager", "OnHeliusWarning", { warning: heliusWarning, isError: isApiKeyError });
-      }
+    let finalSolBalance = solBalanceRef.current; // Fallback to last known balance
 
-      setNfts(fetchedNfts); setCnfts(fetchedCnfts); setTokens(fetchedTokens);
-      if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoaded", { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens, solBalance: fetchedSol });
+    if (solResult.status === 'fulfilled') {
+        finalSolBalance = solResult.value;
+        // State is set inside fetchSolBalanceInternal
+    } else {
+        console.warn('[Page RUW] SOL balance fetch failed, using fallback. Error:', solResult.reason);
+        // Error is already toasted inside fetchSolBalanceInternal
+    }
+    
+    if (assetsResult.status === 'fulfilled') {
+        const { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens, heliusWarning } = assetsResult.value;
 
-      if (!heliusWarning) {
-         toast({ title: "Asset Scan Complete", description: `Found ${fetchedNfts.length} NFTs, ${fetchedCnfts.length} cNFTs, ${fetchedTokens.length} Tokens, and ${fetchedSol.toFixed(SOL_DECIMALS)} SOL on ${currentNetworkRef.current}.` });
-      }
-    } catch (error: any) {
-      console.error("[Page RUW] Failed to load assets:", error);
-      toast({ title: "Error Loading Assets", description: error.message, variant: "destructive" });
-      if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadFailed", { error: error.message });
-      resetLocalAssets();
-    } finally {
-      setIsLoadingAssets(false);
-      if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false });
-      setIsInitialLoadComplete(true);
+        if (heliusWarning) {
+            const isApiKeyError = heliusWarning.toLowerCase().includes("access forbidden") || heliusWarning.toLowerCase().includes("api key");
+            toast({ title: "API Warning", description: heliusWarning, variant: isApiKeyError ? "destructive" : "default", duration: 7000 });
+            if (isLoaded) sendToUnityGame("GameBridgeManager", "OnHeliusWarning", { warning: heliusWarning, isError: isApiKeyError });
+        }
 
-      if (isLoaded && walletHookRef.current.publicKey) {
-         console.log(`[Page RUW] Initial assets processed. Now sending OnWalletConnected to Unity.`);
-         sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: walletHookRef.current.publicKey.toBase58() });
-      }
+        setNfts(fetchedNfts); 
+        setCnfts(fetchedCnfts); 
+        setTokens(fetchedTokens);
+        
+        if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoaded", { nfts: fetchedNfts, cnfts: fetchedCnfts, tokens: fetchedTokens, solBalance: finalSolBalance });
+
+        if (!heliusWarning) {
+            toast({ title: "Asset Scan Complete", description: `Found ${fetchedNfts.length} NFTs, ${fetchedCnfts.length} cNFTs, ${fetchedTokens.length} Tokens, and ${finalSolBalance.toFixed(SOL_DECIMALS)} SOL on ${currentNetworkRef.current}.` });
+        }
+    } else {
+        const error = assetsResult.reason as any;
+        console.error("[Page RUW] Failed to load NFTs and Tokens:", error);
+        toast({ title: "Error Loading NFTs & Tokens", description: error.message, variant: "destructive" });
+        if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadFailed", { error: error.message });
+        setNfts([]);
+        setCnfts([]);
+        setTokens([]);
+    }
+
+    setIsLoadingAssets(false);
+    if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false });
+    setIsInitialLoadComplete(true);
+
+    if (isLoaded && walletHookRef.current.publicKey) {
+        console.log(`[Page RUW] Initial assets processed. Now sending OnWalletConnected to Unity.`);
+        sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: walletHookRef.current.publicKey.toBase58() });
     }
   }, [isLoaded, sendToUnityGame, toast, fetchSolBalanceInternal, connection, resetLocalAssets]); 
 
