@@ -1,7 +1,7 @@
 
 // This is where the Helius API key is read from the environment variables.
 // Ensure NEXT_PUBLIC_HELIUS_API_KEY is set in your .env.local file.
-export const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY;
+export const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY || "ce2bbb77-5585-4ce4-bfb3-8feb9860222a";
 
 // This is where the Custodial Wallet Address is read from environment variables.
 // Ensure NEXT_PUBLIC_CUSTODIAL_WALLET_ADDRESS is set in your .env.local file.
@@ -58,5 +58,6 @@ export const WITHDRAWAL_TAX_PERCENTAGE = 5; // 5%
 
 // The ALLOWED_WALLET_NAMES constant has been removed.
 // The feature to restrict wallets via environment variable is no longer active.
+
 
 
