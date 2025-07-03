@@ -190,12 +190,7 @@ export default function HomePage() {
     const currentPk = walletHookRef.current.publicKey;
     const currentRpc = rpcUrlRef.current; 
 
-    if (!currentPk || !currentRpc || !connection ) {
-      if (isLoaded) {
-        sendToUnityGame("GameBridgeManager", "OnAssetsLoaded", { nfts: [], cnfts: [], tokens: [], solBalance: 0 });
-      }
-      resetLocalAssets();
-      setIsInitialLoadComplete(true);
+    if (!currentPk || !currentRpc || !connection || !isLoaded ) {
       if (isLoaded && currentPk) {
          sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: currentPk.toBase58() });
       }
@@ -249,13 +244,15 @@ export default function HomePage() {
     }
 
     setIsLoadingAssets(false);
-    if (isLoaded) sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false });
-    setIsInitialLoadComplete(true);
-
-    if (isLoaded && walletHookRef.current.publicKey) {
+    if (isLoaded) {
+      sendToUnityGame("GameBridgeManager", "OnAssetsLoadingStateChanged", { isLoading: false });
+      if (walletHookRef.current.publicKey) {
         console.log(`[Page RUW] Initial assets processed. Now sending OnWalletConnected to Unity.`);
         sendToUnityGame("GameBridgeManager", "OnWalletConnected", { publicKey: walletHookRef.current.publicKey.toBase58() });
+      }
     }
+    setIsInitialLoadComplete(true);
+
   }, [isLoaded, sendToUnityGame, toast, fetchSolBalanceInternal, connection, resetLocalAssets]); 
 
   const debouncedLoadUserAssets = useMemo(() => debounce(loadUserAssetsInternal, 500), [loadUserAssetsInternal]);
@@ -523,7 +520,7 @@ export default function HomePage() {
         return solBalanceRef.current;
     }
     return fetchSolBalanceInternal(); 
-  }, [fetchSolBalanceInternal, isInitialLoadComplete]);
+  }, [fetchSolBalanceInternal, isInitialLoadComplete, isLoaded, sendToUnityGame]);
 
   const performTransaction = useCallback(async (actionName: string, mint: string | null, transactionFn: () => Promise<string>, reloadAssets: boolean = true) => {
     if (isSubmittingTransactionRef.current) { if(isLoaded) sendToUnityGame("GameBridgeManager", "OnTransactionError", { action: actionName, error: "Transaction in progress", mint }); return; }
