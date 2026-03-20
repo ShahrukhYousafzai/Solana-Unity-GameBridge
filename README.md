@@ -56,8 +56,12 @@ Unity scripts can trigger these functions directly:
 | `window.handleGetUserNFTsRequest()` | Fetches all NFTs/cNFTs and sends them back to Unity via `OnUserNFTsRequested`. |
 | `window.handleGetUserTokensRequest()` | Fetches all SPL Tokens and SOL balance, sending them via `OnUserTokensRequested`. |
 | `window.handleGetSolBalanceRequest()` | Returns the current SOL balance. |
-| `window.handleTransferNFTRequest(mint, to)` | Initiates an NFT transfer. |
-| `window.handleWithdrawFundsRequest(mint, amount)`| Initiates a withdrawal from the custodial wallet. |
+| `window.handleTransferSOLRequest(amountSol, toAddress)` | Initiates a SOL transfer. |
+| `window.handleTransferTokenRequest(mint, amount, to)` | Initiates an SPL Token transfer. |
+| `window.handleTransferNFTRequest(mint, to)` | Initiates an NFT/cNFT transfer. |
+| `window.handleBurnAssetRequest(mint, amount?)` | Initiates a burn operation for an asset. |
+| `window.handleDepositFundsRequest(mintOrSol, amount)`| Deposits assets into the custodial wallet. |
+| `window.handleWithdrawFundsRequest(mintOrSol, amount)`| Initiates a withdrawal from the custodial wallet. |
 | `window.handleDisconnectWalletRequest()` | Disconnects the current wallet. |
 
 ### 2. Calling from Unity (C#)
@@ -97,6 +101,11 @@ public class GameBridgeManager : MonoBehaviour {
     // Called for transaction status
     public void OnTransactionSubmitting(string json) {
         // Show loading spinner in Unity
+    }
+
+    // Called when the user changes the network (Mainnet/Devnet)
+    public void OnNetworkChanged(string json) {
+        // json: { "network": "devnet" }
     }
 }
 ```
