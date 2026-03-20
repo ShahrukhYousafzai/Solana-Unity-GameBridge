@@ -6,9 +6,9 @@
 
 ## 📸 Screenshots
 
-| Dashboard Overview | Asset Management |
+| Main Page | Wallet Connect |
 | :---: | :---: |
-| ![Dashboard Overview](https://i.ibb.co/v4XQChxd/Screenshot-2026-03-20-at-10-42-44-AM.png) | ![Asset Management](https://i.ibb.co/whZXVn6c/Screenshot-2026-03-20-at-10-42-52-AM.png) |
+| ![Main Page](https://i.ibb.co/v4XQChxd/Screenshot-2026-03-20-at-10-42-44-AM.png) | ![Wallet Connect](https://i.ibb.co/whZXVn6c/Screenshot-2026-03-20-at-10-42-52-AM.png) |
 
 ---
 
