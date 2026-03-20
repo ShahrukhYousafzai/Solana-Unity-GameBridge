@@ -38,13 +38,75 @@ This project serves as a gateway for Unity developers to integrate Web3 features
 - [x] **Smart Asset Indexing**: Real-time loading of NFTs, Compressed NFTs (cNFTs), and SPL Tokens via Helius DAS.
 - [x] **Resilient Balance Fetching**: Optimized SOL balance retrieval with automatic public RPC fallbacks.
 - [x] **Bidirectional Communication**: Instant message passing between the React bridge and Unity C# scripts.
-- [x] **Asset Operations**:
-  - [x] Transfer (NFTs, cNFTs, Tokens, SOL)
-  - [x] Burn (Permanent removal from circulation)
-  - [x] Minting (Standard NFTs supported on Devnet)
-- [x] **Custodial Withdrawal System**: Backend API route for processing game-to-wallet withdrawals with automated tax calculation.
+- [x] **Asset Operations**: Transfer, Burn, Deposit, and Withdraw (with automated tax calculation).
 - [x] **Professional UI**: Fully responsive, dark-mode themed interface using ShadCN components.
-- [x] **Optimized Loading**: Detailed progression tracking for Unity WebGL build loading.
+
+---
+
+## 🎮 Unity Integration Guide
+
+To wire your Unity game with the bridge, follow these patterns for communication.
+
+### 1. Setup in Unity
+Create an empty GameObject in your scene named `GameBridgeManager`. Attach a C# script to it to handle incoming messages from the bridge.
+
+### 2. Calling React from Unity (C#)
+Unity calls the bridge using `Application.ExternalCall` or a `.jslib` plugin that invokes the global `window` handlers defined in `src/app/page.tsx`.
+
+```csharp
+// Example: Requesting a wallet connection
+public void ConnectWallet() {
+    #if !UNITY_EDITOR && UNITY_WEBGL
+        Application.ExternalEval("window.handleConnectWalletRequest()");
+    #endif
+}
+
+// Example: Fetching user NFTs
+public void GetNFTs() {
+    #if !UNITY_EDITOR && UNITY_WEBGL
+        Application.ExternalEval("window.handleGetUserNFTsRequest()");
+    #endif
+}
+
+// Example: Initiating a withdrawal
+public void Withdraw(string mint, float amount) {
+    #if !UNITY_EDITOR && UNITY_WEBGL
+        Application.ExternalEval($"window.handleWithdrawFundsRequest('{mint}', {amount})");
+    #endif
+}
+```
+
+### 3. Handling Bridge Messages in Unity
+The bridge sends JSON messages back to the `GameBridgeManager` GameObject.
+
+```csharp
+using UnityEngine;
+using System;
+
+[Serializable]
+public class WalletData { public string publicKey; }
+
+public class GameBridgeManager : MonoBehaviour {
+    
+    // Called when the wallet connects
+    public void OnWalletConnected(string json) {
+        WalletData data = JsonUtility.FromJson<WalletData>(json);
+        Debug.Log("Wallet Connected: " + data.publicKey);
+        // Trigger game logic (e.g., load profile)
+    }
+
+    // Called when assets are loaded
+    public void OnAssetsLoaded(string json) {
+        // Parse the complex asset JSON (NFTs, Tokens, etc.)
+        // Update your game inventory
+    }
+
+    // Called during transaction processing
+    public void OnTransactionSubmitting(string json) {
+        // Show a "Processing..." spinner in Unity UI
+    }
+}
+```
 
 ---
 
@@ -53,7 +115,7 @@ This project serves as a gateway for Unity developers to integrate Web3 features
 ### Prerequisites
 
 - **Node.js**: v18.x or higher
-- **Helius API Key**: Required for asset indexing and reliable RPC access. [Get one here](https://dev.helius.xyz/).
+- **Helius API Key**: Required for asset indexing. [Get one here](https://dev.helius.xyz/).
 
 ### Local Environment Setup
 
@@ -81,10 +143,6 @@ This project serves as a gateway for Unity developers to integrate Web3 features
    npm run dev
    ```
 
-### Unity Build Placement
-
-To ensure the game loads correctly, place your Unity WebGL build files inside the `public/game/Build/` directory. The application is configured to look for the loader, framework, data, and wasm files in this subfolder to avoid conflicts with Next.js routing.
-
 ---
 
 ## 🏗 Project Structure
@@ -92,14 +150,13 @@ To ensure the game loads correctly, place your Unity WebGL build files inside th
 - `src/app`: Next.js 15 App Router pages and layouts.
 - `src/components`: Reusable UI components (Modals, Dropdowns, Asset Cards).
 - `src/contexts`: React Contexts for Wallet and Network state management.
-- `src/lib`: Core logic for Solana transactions, Helius asset loading, and Unity bridging.
-- `src/types`: TypeScript definitions for blockchain assets and API responses.
+- `src/lib`: Core logic for Solana transactions and Helius asset loading.
 - `public/game`: Target directory for Unity WebGL build assets.
 
 ---
 
 ## 🛡 Security & Best Practices
 
-- **Private Keys**: Server-side secrets are managed via non-prefixed environment variables to prevent client-side exposure.
-- **RPC Resiliency**: The app implements fallback mechanisms for read-only RPC calls to ensure high availability.
-- **Transaction Safety**: All mutations require explicit wallet approval and provide feedback via transaction signatures.
+- **Private Keys**: Server-side secrets are managed via non-prefixed environment variables.
+- **RPC Resiliency**: Automatic fallback to public RPCs for balance checks.
+- **Transaction Safety**: All mutations require explicit wallet approval.
