@@ -1,0 +1,21 @@
+
+{
+  "logo": {
+    "src": "https://picsum.photos/seed/game-logo-1/40/40",
+    "width": 40,
+    "height": 40,
+    "alt": "Game Logo"
+  },
+  "loadingLogo": {
+    "src": "https://picsum.photos/seed/game-hero-1/240/240",
+    "width": 240,
+    "height": 240,
+    "alt": "Game Loading Logo"
+  },
+  "gamePlaceholder": {
+    "src": "https://picsum.photos/seed/game-screen-1/1280/720",
+    "width": 1280,
+    "height": 720,
+    "alt": "Game Placeholder Screen"
+  }
+}
