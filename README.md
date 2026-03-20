@@ -33,77 +33,70 @@ This project serves as a gateway for Unity developers to integrate Web3 features
 
 ## ✨ Features Checklist
 
-- [x] **Wallet Connectivity**: Full support for Phantom, Solflare, and Backpack with `autoConnect` functionality.
+- [x] **Wallet Connectivity**: Full support for Phantom, Solflare, and Backpack with `autoConnect`.
 - [x] **Multi-Network Support**: Seamless switching between Mainnet-Beta, Devnet, and Testnet.
-- [x] **Smart Asset Indexing**: Real-time loading of NFTs, Compressed NFTs (cNFTs), and SPL Tokens via Helius DAS.
+- [x] **Smart Asset Indexing**: Real-time loading of NFTs, Compressed NFTs (cNFTs), and SPL Tokens via Helius.
 - [x] **Resilient Balance Fetching**: Optimized SOL balance retrieval with automatic public RPC fallbacks.
-- [x] **Bidirectional Communication**: Instant message passing between the React bridge and Unity C# scripts.
+- [x] **Bidirectional Communication**: Instant message passing between React and Unity.
 - [x] **Asset Operations**: Transfer, Burn, Deposit, and Withdraw (with automated tax calculation).
-- [x] **Professional UI**: Fully responsive, dark-mode themed interface using ShadCN components.
 
 ---
 
-## 🎮 Unity Integration Guide
+## 🎮 Unity Integration & Wiring Guide
 
-To wire your Unity game with the bridge, follow these patterns for communication.
+The bridge exposes a global API via the `window` object that Unity can call using `Application.ExternalEval`.
 
-### 1. Setup in Unity
-Create an empty GameObject in your scene named `GameBridgeManager`. Attach a C# script to it to handle incoming messages from the bridge.
+### 1. The React-to-Unity API (Global Handlers)
 
-### 2. Calling React from Unity (C#)
-Unity calls the bridge using `Application.ExternalCall` or a `.jslib` plugin that invokes the global `window` handlers defined in `src/app/page.tsx`.
+Unity scripts can trigger these functions directly:
+
+| Function | Description |
+| :--- | :--- |
+| `window.handleConnectWalletRequest(name?)` | Opens the wallet modal or connects a specific wallet (e.g., "Phantom"). |
+| `window.handleGetUserNFTsRequest()` | Fetches all NFTs/cNFTs and sends them back to Unity via `OnUserNFTsRequested`. |
+| `window.handleGetUserTokensRequest()` | Fetches all SPL Tokens and SOL balance, sending them via `OnUserTokensRequested`. |
+| `window.handleGetSolBalanceRequest()` | Returns the current SOL balance. |
+| `window.handleTransferNFTRequest(mint, to)` | Initiates an NFT transfer. |
+| `window.handleWithdrawFundsRequest(mint, amount)`| Initiates a withdrawal from the custodial wallet. |
+| `window.handleDisconnectWalletRequest()` | Disconnects the current wallet. |
+
+### 2. Calling from Unity (C#)
 
 ```csharp
-// Example: Requesting a wallet connection
-public void ConnectWallet() {
+// Example: Requesting the wallet list
+public void RequestWallets() {
     #if !UNITY_EDITOR && UNITY_WEBGL
-        Application.ExternalEval("window.handleConnectWalletRequest()");
+        Application.ExternalEval("window.handleGetAvailableWalletsRequest()");
     #endif
 }
 
-// Example: Fetching user NFTs
-public void GetNFTs() {
+// Example: Sending SOL
+public void SendSol(string toAddress, float amount) {
     #if !UNITY_EDITOR && UNITY_WEBGL
-        Application.ExternalEval("window.handleGetUserNFTsRequest()");
-    #endif
-}
-
-// Example: Initiating a withdrawal
-public void Withdraw(string mint, float amount) {
-    #if !UNITY_EDITOR && UNITY_WEBGL
-        Application.ExternalEval($"window.handleWithdrawFundsRequest('{mint}', {amount})");
+        Application.ExternalEval($"window.handleTransferSOLRequest({amount}, '{toAddress}')");
     #endif
 }
 ```
 
-### 3. Handling Bridge Messages in Unity
-The bridge sends JSON messages back to the `GameBridgeManager` GameObject.
+### 3. Receiving Data in Unity
+
+Your Unity game must have a GameObject named **`GameBridgeManager`** with a script containing these methods:
 
 ```csharp
-using UnityEngine;
-using System;
-
-[Serializable]
-public class WalletData { public string publicKey; }
-
 public class GameBridgeManager : MonoBehaviour {
-    
     // Called when the wallet connects
     public void OnWalletConnected(string json) {
-        WalletData data = JsonUtility.FromJson<WalletData>(json);
-        Debug.Log("Wallet Connected: " + data.publicKey);
-        // Trigger game logic (e.g., load profile)
+        // json: { "publicKey": "..." }
     }
 
-    // Called when assets are loaded
-    public void OnAssetsLoaded(string json) {
-        // Parse the complex asset JSON (NFTs, Tokens, etc.)
-        // Update your game inventory
+    // Called when NFTs are loaded
+    public void OnUserNFTsRequested(string json) {
+        // Parse the list of NFTs and cNFTs here
     }
 
-    // Called during transaction processing
+    // Called for transaction status
     public void OnTransactionSubmitting(string json) {
-        // Show a "Processing..." spinner in Unity UI
+        // Show loading spinner in Unity
     }
 }
 ```
@@ -113,50 +106,16 @@ public class GameBridgeManager : MonoBehaviour {
 ## 🚀 Getting Started
 
 ### Prerequisites
-
-- **Node.js**: v18.x or higher
-- **Helius API Key**: Required for asset indexing. [Get one here](https://dev.helius.xyz/).
+- **Node.js**: v18.x+
+- **Helius API Key**: [Get one here](https://dev.helius.xyz/).
 
 ### Local Environment Setup
 
-1. **Clone the repository**:
-   ```bash
-   git clone <your-repo-url>
-   cd solblaze
-   ```
-
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-
-3. **Configure Environment Variables**:
-   Create a `.env.local` file in the root directory:
+1. **Install dependencies**: `npm install`
+2. **Configure `.env.local`**:
    ```env
-   NEXT_PUBLIC_HELIUS_API_KEY="your-helius-api-key"
-   NEXT_PUBLIC_CUSTODIAL_WALLET_ADDRESS="your-custodial-wallet-pubkey"
-   CUSTODIAL_WALLET_PRIVATE_KEY="your-custodial-wallet-private-key"
+   NEXT_PUBLIC_HELIUS_API_KEY="your-api-key"
+   NEXT_PUBLIC_CUSTODIAL_WALLET_ADDRESS="your-custodial-pubkey"
+   CUSTODIAL_WALLET_PRIVATE_KEY="your-private-key"
    ```
-
-4. **Run the development server**:
-   ```bash
-   npm run dev
-   ```
-
----
-
-## 🏗 Project Structure
-
-- `src/app`: Next.js 15 App Router pages and layouts.
-- `src/components`: Reusable UI components (Modals, Dropdowns, Asset Cards).
-- `src/contexts`: React Contexts for Wallet and Network state management.
-- `src/lib`: Core logic for Solana transactions and Helius asset loading.
-- `public/game`: Target directory for Unity WebGL build assets.
-
----
-
-## 🛡 Security & Best Practices
-
-- **Private Keys**: Server-side secrets are managed via non-prefixed environment variables.
-- **RPC Resiliency**: Automatic fallback to public RPCs for balance checks.
-- **Transaction Safety**: All mutations require explicit wallet approval.
+3. **Run**: `npm run dev`
